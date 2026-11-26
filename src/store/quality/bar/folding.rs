@@ -11,17 +11,18 @@ use regex_syntax::hir::{Class, HirKind};
 const SCALAR_VALUES: u64 = 0x11_0000 - 0x800;
 
 /// An upper bound on the code points translating `ast`, the syntax tree of
-/// `pattern`, folds: none when no flag of it is case-insensitive, else the
-/// span of each class it folds. A bracketed class folds what it holds once
-/// for each bracket around it, and a Unicode class its own span besides;
-/// a Perl class outside brackets folds nothing, since it is closed under
-/// case folding.
+/// `pattern`, folds: the span of each class read while case insensitivity
+/// is on, as translation scopes the flag, from `(?i)` to the end of its
+/// group or `(?-i)`, and within a group `(?i:...)`. A bracketed class folds
+/// what it holds once for each bracket around it, and a Unicode class its
+/// own span besides; a Perl class outside brackets folds nothing, since it
+/// is closed under case folding.
 pub(super) fn folded_code_points(pattern: &str, ast: &Ast) -> u64 {
     let counted = ast::visit(
         ast,
         Folding {
             pattern,
-            insensitive: false,
+            insensitive: vec![false],
             depth: 0,
             code_points: 0,
         },
@@ -36,7 +37,9 @@ pub(super) fn folded_code_points(pattern: &str, ast: &Ast) -> u64 {
 /// The count over one syntax tree.
 struct Folding<'p> {
     pattern: &'p str,
-    insensitive: bool,
+    /// Whether case insensitivity is on in the pattern, then in each group
+    /// open around the item being visited, the innermost last.
+    insensitive: Vec<bool>,
     /// The brackets around the class item being visited.
     depth: u64,
     code_points: u64,
@@ -70,14 +73,17 @@ impl Folding<'_> {
         }
     }
 
+    /// Count `code_points` folded, when case insensitivity is on.
     fn add(&mut self, code_points: u64) {
-        self.code_points = self.code_points.saturating_add(code_points);
+        if self.insensitive.last() == Some(&true) {
+            self.code_points = self.code_points.saturating_add(code_points);
+        }
     }
+}
 
-    /// Whether `flags` turn case insensitivity on.
-    fn sets_insensitive(&mut self, flags: &ast::Flags) {
-        self.insensitive |= flags.flag_state(Flag::CaseInsensitive) == Some(true);
-    }
+/// Whether `flags` turn case insensitivity on or off, if they name it.
+fn insensitivity(flags: &ast::Flags) -> Option<bool> {
+    flags.flag_state(Flag::CaseInsensitive)
 }
 
 impl Visitor for Folding<'_> {
@@ -85,20 +91,24 @@ impl Visitor for Folding<'_> {
     type Err = std::convert::Infallible;
 
     fn finish(self) -> Result<u64, Self::Err> {
-        Ok(if self.insensitive {
-            self.code_points
-        } else {
-            0
-        })
+        Ok(self.code_points)
     }
 
     fn visit_pre(&mut self, ast: &Ast) -> Result<(), Self::Err> {
         match ast {
-            Ast::Flags(set) => self.sets_insensitive(&set.flags),
-            Ast::Group(group) => {
-                if let GroupKind::NonCapturing(flags) = &group.kind {
-                    self.sets_insensitive(flags);
+            Ast::Flags(set) => {
+                let (set, top) = (insensitivity(&set.flags), self.insensitive.last_mut());
+                if let (Some(on), Some(top)) = (set, top) {
+                    *top = on;
                 }
+            }
+            Ast::Group(group) => {
+                let outer = self.insensitive.last() == Some(&true);
+                let own = match &group.kind {
+                    GroupKind::NonCapturing(flags) => insensitivity(flags),
+                    GroupKind::CaptureIndex(_) | GroupKind::CaptureName { .. } => None,
+                };
+                self.insensitive.push(own.unwrap_or(outer));
             }
             Ast::ClassUnicode(class) => {
                 let positive = self.positive(class);
@@ -120,8 +130,22 @@ impl Visitor for Folding<'_> {
     }
 
     fn visit_post(&mut self, ast: &Ast) -> Result<(), Self::Err> {
-        if let Ast::ClassBracketed(_) = ast {
-            self.depth -= 1;
+        match ast {
+            Ast::ClassBracketed(_) => self.depth -= 1,
+            Ast::Group(_) => {
+                self.insensitive.pop();
+            }
+            // Nothing else opened what its visit closes.
+            Ast::Empty(_)
+            | Ast::Flags(_)
+            | Ast::Literal(_)
+            | Ast::Dot(_)
+            | Ast::Assertion(_)
+            | Ast::ClassUnicode(_)
+            | Ast::ClassPerl(_)
+            | Ast::Repetition(_)
+            | Ast::Alternation(_)
+            | Ast::Concat(_) => {}
         }
         Ok(())
     }
@@ -156,5 +180,34 @@ impl Visitor for Folding<'_> {
             self.depth -= 1;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folded(pattern: &str) -> u64 {
+        let ast = ast::parse::Parser::new().parse(pattern).unwrap();
+        folded_code_points(pattern, &ast)
+    }
+
+    /// A class folds only where case insensitivity is on when it is read:
+    /// a flag holds to the end of its group, across its alternatives, and
+    /// `(?-i)` turns it off.
+    #[test]
+    fn a_class_folds_only_under_the_flag_in_its_scope() {
+        let every = folded(r"(?i)[\s\S]");
+        assert!(every > 1_000_000, "{every}");
+        for (pattern, times) in [
+            (r"[\s\S][\s\S](?i:x)", 0),
+            (r"[\s\S]((?i)x)[\s\S]", 0),
+            (r"(?i:[\s\S])[\s\S]", 1),
+            (r"(?i)[\s\S](?-i)[\s\S]", 1),
+            (r"(?i)x|[\s\S]", 1),
+            (r"(?i)[\s\S](?:x|[\s\S])", 2),
+        ] {
+            assert_eq!(folded(pattern), times * every, "{pattern}");
+        }
     }
 }

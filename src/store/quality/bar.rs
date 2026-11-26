@@ -7,7 +7,8 @@
 //! keys, then the patterns in the order `[quality]` lists them; the first
 //! rule broken refuses the decision. A `warn` pattern gives one warning at
 //! its first match and never refuses. The patterns of one write share one
-//! [`Scan`]: a bound on the bytes they read, and a cache per pattern.
+//! [`Scan`]: a bound on the bytes they read, a cache per pattern and a
+//! total of their growth.
 
 use std::borrow::Cow;
 
@@ -24,8 +25,7 @@ mod pattern;
 
 pub use audit::Shortfall;
 pub(crate) use pattern::Scan;
-use pattern::{Compiled, grown_most, searched};
-pub(crate) use regex_automata::hybrid::regex::Cache as PatternCache;
+use pattern::{Compiled, searched};
 
 /// The rules of one `[quality]` table, its patterns compiled.
 #[derive(Debug)]
@@ -127,17 +127,20 @@ impl Bar {
         }
     }
 
-    /// An empty cache for each pattern, in their order.
-    pub(crate) fn caches(&self) -> Vec<PatternCache> {
-        self.patterns.iter().map(Compiled::cache).collect()
-    }
-
     /// What one write's patterns may read and build: an empty cache for
     /// each, the bytes of `MAX_WRITE_PATTERN_BYTES` and the growth of
     /// `MAX_PATTERN_CACHE_TOTAL_BYTES`.
     pub(crate) fn scan(&self) -> Scan {
         let (bytes, cache) = (MAX_WRITE_PATTERN_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES);
         Scan::of(&self.patterns, bytes, cache)
+    }
+
+    /// What one report page's patterns may build: an empty cache for each
+    /// and the growth of `MAX_PATTERN_CACHE_TOTAL_BYTES`. No byte: a page
+    /// charges each decision's bytes before any pattern runs
+    /// ([`Bar::pattern_bytes`]), so its patterns search, never charge.
+    pub(crate) fn page_scan(&self) -> Scan {
+        Scan::of(&self.patterns, 0, MAX_PATTERN_CACHE_TOTAL_BYTES)
     }
 
     /// `decision` against the bar in the fields of `held`: the first rule
@@ -166,37 +169,25 @@ impl Bar {
     /// fields it reads: the first `refuse` match, or the `warn` matches,
     /// each with where it matched. Each pattern charges `scan` the bytes it
     /// would read before it reads them, and searches over its cache there.
-    /// Past the bound the write is refused, as it is when a cache gives up
-    /// or when, after a pattern's search, the growth of the caches has
-    /// passed their total: by one pattern's two caches at most. A give-up
-    /// or the total says whether `texts` alone filled the caches, which
-    /// were empty before this call.
+    /// Past the bound the write is refused, as it is at the text where a
+    /// cache gives up or the growth of the caches passes their total; no
+    /// pattern after it runs.
     pub(crate) fn judge_patterns(
         &self,
         texts: &[(Place, Cow<'_, str>)],
         scan: &mut Scan,
     ) -> Result<Vec<(Place, Hit)>, Breach> {
-        let alone = scan.is_alone();
         let mut hits = Vec::new();
         for (index, pattern) in self.patterns.iter().enumerate() {
-            let read: Vec<(Place, &str)> = texts
-                .iter()
-                .filter(|(place, _)| pattern.fields.contains(&place.field))
-                .map(|(place, text)| (*place, text.as_ref()))
-                .collect();
-            match scan.search(index, pattern, read)? {
-                Ok(Some((place, found))) => {
-                    hits.push((place, pattern.verdict(index, place, &found)?));
-                }
-                Ok(None) => {}
-                // No pattern after it runs: the total is the write's fault
-                // here, whatever a later pattern would find.
-                Err(place) => {
-                    let largest = scan.largest();
-                    let total = QualityFault::CacheTotal { largest, alone };
-                    let broken = Broken::Quality(total);
-                    return Err(Breach { place, broken });
-                }
+            let read = pattern.read(texts);
+            scan.charge(&read)?;
+            let found = scan.search(index, pattern, &read);
+            let found = found.map_err(|(place, fault)| Breach {
+                place,
+                broken: Broken::Quality(fault),
+            })?;
+            if let Some((place, found)) = found {
+                hits.push((place, pattern.verdict(index, place, &found)?));
             }
         }
         Ok(hits)
@@ -214,7 +205,6 @@ impl Bar {
             .into_iter()
             .collect();
         let hits = self.judge_patterns(&texts, scan)?;
-        scan.settle();
         Ok(hits.into_iter().map(|(_, hit)| hit).collect())
     }
 
@@ -527,11 +517,24 @@ mod tests {
 
         let judged = bar.judge(&decision, &held, &mut scan).map_err(|b| b.broken);
 
-        let total = QualityFault::CacheTotal {
-            largest: 0,
-            alone: true,
-        };
+        let total = QualityFault::CacheTotal { largest: 0 };
         assert_eq!(judged, Err(Broken::Quality(total)));
+    }
+
+    /// Caches that pass their total over one of a pattern's texts are
+    /// refused at that text, not at the last the pattern reads.
+    #[test]
+    fn the_total_is_refused_at_the_text_whose_search_passed_it() {
+        let bar = Bar::compile(&quality(&["[a-x]y"])).unwrap();
+        let mut decision = sample_decision("project");
+        decision.choice = "Keep the lock".into();
+        decision.reason = "Because it holds.".into();
+        let held = [DecisionField::Choice, DecisionField::Reason];
+        let mut scan = Scan::of(&bar.patterns, usize::MAX, 1);
+
+        let breach = bar.judge(&decision, &held, &mut scan).unwrap_err();
+
+        assert_eq!(breach.place, Place::whole(DecisionField::Choice));
     }
 
     /// A search whose automaton outgrows its cache gives up instead of
@@ -551,12 +554,29 @@ mod tests {
         assert_eq!(breach.place, Place::whole(DecisionField::Reason));
         assert_eq!(
             breach.broken,
-            Broken::Quality(QualityFault::GaveUp {
-                index: 1,
-                alone: true
-            })
+            Broken::Quality(QualityFault::GaveUp { index: 1 })
         );
         assert_eq!(judged(&bar, &decision, usize::MAX), Ok(vec![]));
+    }
+
+    /// A cache that gave up is emptied: the same scan judges a later text,
+    /// its states built again and charged.
+    #[test]
+    fn a_cache_that_gave_up_is_emptied_for_the_texts_after_it() {
+        let bar = Bar::compile(&quality(&[OUTGROWS_ITS_CACHE])).unwrap();
+        let mut decision = sample_decision("project");
+        decision.reason = coin_flips(12_000, 7);
+        let mut scan = bar.scan();
+        let held = [DecisionField::Reason];
+        bar.judge(&decision, &held, &mut scan).unwrap_err();
+        let spent = scan.cache_left;
+        decision.reason = coin_flips(300, 8);
+
+        let judged = bar.judge(&decision, &held, &mut scan);
+
+        let judged = judged.map(|_warnings| ()).map_err(|breach| breach.broken);
+        assert_eq!(judged, Ok(()));
+        assert!(scan.cache_left < spent, "{spent}");
     }
 
     #[test]

@@ -9,8 +9,7 @@
 
 use rayon::prelude::*;
 
-use crate::store::limits::MAX_PATTERN_CACHE_TOTAL_BYTES;
-use crate::store::{Bar, Decision, PatternCache, ProjectState, QualityFault, Shortfall};
+use crate::store::{Bar, Decision, ProjectState, Shortfall};
 
 /// The findings of one kind: how many there are, and the first of them, by
 /// decision name, as many as asked for.
@@ -91,16 +90,13 @@ pub(crate) enum Stop {
 }
 
 /// Where a finding comes in its decision's: the limits in the order the
-/// bar reads them, then each pattern's findings in its order.
+/// bar reads them, then the patterns' findings in their order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Rank {
     /// A limit's finding, by its order among the decision's.
     Limit(usize),
-    /// A pattern's finding: the pattern's index, then the finding's order
-    /// among that pattern's for the decision.
-    Pattern { index: usize, order: usize },
-    /// The patterns' caches past their total over the decision.
-    Total,
+    /// A pattern's finding, by its order among the decision's.
+    Pattern(usize),
 }
 
 /// A finding with its decision's position among those wanted.
@@ -116,11 +112,10 @@ type Placed = (usize, Rank, Shortfall);
 /// finding past them.
 ///
 /// The limits are judged on the thread pool over the decisions, each task
-/// a run of them in order; the patterns one task per pattern, so a
-/// compiled pattern runs on one thread at a time over one cache whatever
-/// the threads. Each task keeps its first `limit` findings and they are
-/// merged in order, so the pass holds a bounded number of findings, and
-/// nothing depends on the threads.
+/// a run of them in order, keeping its first `limit` findings, merged in
+/// order: the pass holds a bounded number of findings, and nothing depends
+/// on the threads. The patterns judge one decision after another over one
+/// scan for the page, as a write judges its ops.
 pub(crate) fn shortfalls<'s>(
     state: &'s ProjectState,
     bar: &Bar,
@@ -198,70 +193,34 @@ fn limit_findings(bar: &Bar, decisions: &[(&str, &Decision)], limit: usize) -> F
         .reduce(Found::new, |earlier, later| earlier.then(later, limit))
 }
 
-/// Whether `shortfall` is a pattern's cache giving up.
-const fn is_give_up(shortfall: &Shortfall) -> bool {
-    match shortfall.fault {
-        QualityFault::GaveUp { .. } => true,
-        QualityFault::Limit { .. }
-        | QualityFault::Pattern(_)
-        | QualityFault::CacheTotal { .. }
-        | QualityFault::OriginRequired => false,
-    }
-}
-
-/// One decision judged by every pattern: each pattern's findings, in their
-/// order, and how much its caches grew.
-type Judged = Vec<(Vec<Shortfall>, usize)>;
-
-/// `decision` judged by each pattern of `bar` over its cache of `caches`:
-/// on the thread pool, one task per pattern, so a cache is one thread's.
-fn judged(bar: &Bar, decision: &Decision, caches: &mut [PatternCache]) -> Judged {
-    caches
-        .par_iter_mut()
-        .enumerate()
-        .map(|(index, cache)| {
-            let before = cache.memory_usage();
-            let found = bar.audit_pattern(index, decision, cache);
-            (found, cache.memory_usage().saturating_sub(before))
-        })
-        .collect()
-}
-
 /// The matches of the patterns of `bar` in `read`, the first `kept`,
-/// decision by decision, each pattern over one cache for the call. Once the
-/// findings before the next decision, `limits`' and the patterns', pass
-/// `kept`, a page cannot list past them, so the rest go unjudged. A cache
-/// that gives up on a decision, or caches that grow past
-/// `MAX_PATTERN_CACHE_TOTAL_BYTES` over it, end the judging before it, so
-/// the next page judges it first, over fresh caches. On the first decision
-/// read, the judging ends after it, the give-up or the total its finding.
-/// The matches, how many of `read` the patterns judged, and why they
-/// stopped there.
+/// decision by decision over one scan for the page ([`Bar::page_scan`]).
+/// Once the findings before the next decision, `limits`' and the
+/// patterns', pass `kept`, a page cannot list past them, so the rest go
+/// unjudged. A cache that gives up on a decision, or caches that grow past
+/// their total over it, end the judging before it, so the next page judges
+/// it first, over fresh caches. On the first decision read, the judging
+/// ends after it, the give-up or the total its finding. The matches, how
+/// many of `read` the patterns judged, and why they stopped there.
 fn pattern_runs(
     bar: &Bar,
     read: &[(&str, &Decision)],
     limits: &Found<Placed>,
     kept: usize,
 ) -> (Found<Placed>, usize, Option<Stop>) {
-    let mut caches = bar.caches();
-    let mut grown = vec![0usize; caches.len()];
+    let mut scan = bar.page_scan();
     let mut found = Found::new();
     for (position, &(_, decision)) in read.iter().enumerate() {
-        let each = judged(bar, decision, &mut caches);
-        let (over, gave_up) = filled(&mut grown, &each);
-        if position > 0 && (over || gave_up) {
+        let (shortfalls, stopped) = bar.audit_patterns(decision, &mut scan);
+        if position > 0 && stopped.is_some() {
             return (found, position, Some(Stop::GaveUp));
         }
-        for (index, (shortfalls, _)) in each.into_iter().enumerate() {
-            for (order, shortfall) in shortfalls.into_iter().enumerate() {
-                found.add(kept, (position, Rank::Pattern { index, order }, shortfall));
-            }
+        let ended = stopped.is_some();
+        let each = shortfalls.into_iter().chain(stopped).enumerate();
+        for (order, shortfall) in each {
+            found.add(kept, (position, Rank::Pattern(order), shortfall));
         }
-        if over || gave_up {
-            if over {
-                let total = bar.cache_total(&grown);
-                found.add(kept, (position, Rank::Total, total));
-            }
+        if ended {
             return (found, 1, Some(Stop::GaveUp));
         }
         let limited = limits.first.iter().take_while(|&&(at, ..)| at <= position);
@@ -271,20 +230,6 @@ fn pattern_runs(
         }
     }
     (found, read.len(), None)
-}
-
-/// The growth of each pattern's caches over a decision, `each`, added to
-/// `grown`, the page's: whether together they passed the page's total, and
-/// whether a cache gave up over the decision.
-fn filled(grown: &mut [usize], each: &Judged) -> (bool, bool) {
-    for (sum, &(_, more)) in grown.iter_mut().zip(each) {
-        *sum = sum.saturating_add(more);
-    }
-    let total = grown
-        .iter()
-        .fold(0, |sum: usize, &more| sum.saturating_add(more));
-    let gave_up = each.iter().any(|(found, _)| found.iter().any(is_give_up));
-    (total > MAX_PATTERN_CACHE_TOTAL_BYTES, gave_up)
 }
 
 /// The bytes the patterns of `bar` would read over every one of
@@ -340,7 +285,7 @@ pub(crate) fn file_anchors_only(
 mod tests {
     use super::*;
     use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, empty_state, sample_decision};
-    use crate::store::{Anchor, DecisionField, Level, Pattern, Quality};
+    use crate::store::{Anchor, DecisionField, Level, Pattern, Quality, QualityFault};
 
     /// Six hundred decisions, each lacking an alternative and an anchor
     /// but every tenth, which names a file alone and a reason with `zz`.
@@ -581,7 +526,7 @@ mod tests {
         assert_eq!(whys, [Stop::GaveUp, Stop::GaveUp, Stop::GaveUp]);
         let gave_up: Vec<(&str, Level)> = listed
             .iter()
-            .filter(|(_, shortfall)| is_give_up(shortfall))
+            .filter(|(_, shortfall)| shortfall.fault == QualityFault::GaveUp { index: 0 })
             .map(|(name, shortfall)| (name.as_str(), shortfall.level))
             .collect();
         assert_eq!(gave_up, [("d005", Level::Refuse)]);
@@ -643,10 +588,7 @@ mod tests {
         assert_eq!(page.reach.read, ["d000"]);
         let next = page.reach.next.map(|next| (next.decision, next.why));
         assert_eq!(next, Some(("d001", Stop::GaveUp)));
-        let total = QualityFault::CacheTotal {
-            largest: 0,
-            alone: true,
-        };
+        let total = QualityFault::CacheTotal { largest: 0 };
         let found: Vec<&Shortfall> = page.found.first.iter().map(|(_, s)| s).collect();
         assert!(
             found
@@ -654,5 +596,38 @@ mod tests {
                 .any(|s| s.fault == total && s.level == Level::Refuse),
             "{found:?}"
         );
+    }
+
+    /// A page's caches grow past their total by one pattern's search at
+    /// most, as a write's do: the patterns judge a decision in their order,
+    /// and none after the one whose search passed the total runs, so a
+    /// last pattern that would match gives no finding.
+    #[test]
+    fn a_page_runs_no_pattern_after_the_search_that_passes_the_total() {
+        let mut state = empty_state();
+        let mut decision = sample_decision("project");
+        decision.reason = coin_flips(3_000, 0);
+        state.decisions.insert("d000".into(), decision);
+        let mut patterns = vec![table_of(OUTGROWS_ITS_CACHE).patterns[0].clone(); 8];
+        patterns.extend(table_of("ab").patterns);
+        let table = Quality {
+            patterns,
+            ..Quality::default()
+        };
+        let (bar, _) = Bar::for_report(&table);
+
+        let page = shortfalls(&state, &bar, usize::MAX, usize::MAX, |_, _| true);
+
+        let found = page.found.first.iter().map(|(_, s)| &s.fault);
+        let last = found.clone().find(|fault| match fault {
+            QualityFault::Pattern(found) => found.index == 8,
+            QualityFault::Limit { .. }
+            | QualityFault::GaveUp { .. }
+            | QualityFault::CacheTotal { .. }
+            | QualityFault::OriginRequired => false,
+        });
+        assert_eq!(last, None);
+        let rules: Vec<&str> = found.map(QualityFault::as_str).collect();
+        assert_eq!(rules.last(), Some(&"pattern_cache_total"), "{rules:?}");
     }
 }

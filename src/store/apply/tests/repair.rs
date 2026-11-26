@@ -356,14 +356,43 @@ fn a_repair_of_the_map_a_pattern_refuses_is_left_with_its_rule() {
     assert_eq!(left, [("b", "pattern")]);
 }
 
-/// The anchors a repair of the map brings are read over the batch's
-/// caches, after every earlier op: one whose pattern gives up, here after
-/// a record of random letters filled its cache, is left with the give-up
-/// as its rule, and the batch is written. An earlier op cannot turn a
-/// repair the caller did not write into a refusal.
+/// Two stale anchors of one decision whose repairs in the map are one
+/// anchor, which a pattern refuses: the decision is judged once on what it
+/// gained, and both repairs are left, the decision holding both stale
+/// anchors and the result naming no repair.
 #[test]
-fn a_repair_of_the_map_a_pattern_gives_up_on_is_left_and_the_batch_written() {
+fn two_repairs_of_the_map_to_one_refused_anchor_are_left_together() {
     let tmp = TempDir::new().unwrap();
+    let store = vendored(&tmp);
+    let mut decision = sample_decision("project");
+    decision.anchors = [held("src/p.rs::x"), held("src/q.rs::x")].into();
+    write_node(&store, &NodeFile::Decision("z".into()), &decision);
+    let map = [
+        ("src/p.rs::x", "vendor/x.rs"),
+        ("src/q.rs::x", "vendor/x.rs"),
+    ];
+
+    let applied = apply(&store, vec![every(&map)]).unwrap();
+
+    assert_eq!(anchors(&store, "z"), ["src/p.rs::x", "src/q.rs::x"]);
+    assert_eq!(applied.repaired, []);
+    let left: Vec<(String, &str)> = applied
+        .left
+        .iter()
+        .map(|left| (left.repaired.from.to_string(), left.rule.as_str()))
+        .collect();
+    assert_eq!(
+        left,
+        [
+            ("src/p.rs::x".to_owned(), "pattern"),
+            ("src/q.rs::x".to_owned(), "pattern")
+        ]
+    );
+}
+
+/// The decision `dec-a` holding `src/old.rs`, under a pattern no cache
+/// holds over random letters, at `warn` over anchors and reason.
+fn outgrown(tmp: &TempDir) -> Store {
     let store = graph(tmp.path());
     let path = store.project_path();
     let text = fs::read_to_string(&path).unwrap();
@@ -375,17 +404,35 @@ fn a_repair_of_the_map_a_pattern_gives_up_on_is_left_and_the_batch_written() {
     let mut decision = sample_decision("project");
     decision.anchors = [held("src/old.rs")].into();
     write_node(&store, &NodeFile::Decision("dec-a".into()), &decision);
+    store
+}
+
+/// A record whose reason is `letters` random letters drawn by `seed`.
+fn random(name: &str, letters: usize, seed: u64) -> Op {
+    let mut record = super::record(name, "auth");
+    record.reason = coin_flips(letters, seed);
+    Op::Record(record)
+}
+
+/// The anchors a repair of the map brings are read over the batch's
+/// caches, after every earlier op: one whose pattern gives up, here after
+/// a record of random letters filled its cache, is left with the give-up
+/// as its rule. It leaves no trace: the record after it, which the batch
+/// writes without the repair, is written with it too.
+#[test]
+fn a_repair_of_the_map_a_pattern_gives_up_on_is_left_and_a_later_op_written() {
     let to = format!("src/{}/{}.rs", coin_flips(240, 1), coin_flips(240, 2));
-    let mut warmer = super::record("warmer", "auth");
-    warmer.reason = coin_flips(3_200, 3);
+    let records = || [random("warmer", 3_200, 3), random("second", 300, 9)];
+    let tmp = TempDir::new().unwrap();
+    let [warmer, second] = records();
+    apply(&outgrown(&tmp), vec![warmer, second]).unwrap();
+    let tmp = TempDir::new().unwrap();
+    let store = outgrown(&tmp);
+    let [warmer, second] = records();
 
-    let applied = apply(
-        &store,
-        vec![Op::Record(warmer), every(&[("src/old.rs", &to)])],
-    )
-    .unwrap();
+    let applied = apply(&store, vec![warmer, every(&[("src/old.rs", &to)]), second]).unwrap();
 
-    assert_eq!(applied.written, 1);
+    assert_eq!(applied.written, 2);
     assert_eq!(anchors(&store, "dec-a"), ["src/old.rs"]);
     let left: Vec<(&str, &str)> = applied
         .left
@@ -393,40 +440,4 @@ fn a_repair_of_the_map_a_pattern_gives_up_on_is_left_and_the_batch_written() {
         .map(|left| (left.repaired.decision.as_str(), left.rule.as_str()))
         .collect();
     assert_eq!(left, [("dec-a", "pattern_gave_up")]);
-}
-
-/// One op is alone whatever the decisions it changes: listed repairs to
-/// anchors of random letters over which a pattern's cache fills refuse the
-/// batch as `pattern_gave_up` at a later decision, naming the op's texts
-/// and the pattern as the remedy, never a split of the one-op batch.
-#[test]
-fn a_cache_filled_by_one_op_of_listed_repairs_names_that_op_alone() {
-    let tmp = TempDir::new().unwrap();
-    let store = graph(tmp.path());
-    let path = store.project_path();
-    let text = fs::read_to_string(&path).unwrap();
-    let table = format!(
-        "[quality]\n[[quality.patterns]]\npattern = '{OUTGROWS_ITS_CACHE}'\n\
-         fields = [\"anchors\"]\nlevel = \"warn\"\nmessage = \"Random.\""
-    );
-    fs::write(&path, format!("{text}\n{table}\n")).unwrap();
-    let repairs: Vec<Repair> = (0..20)
-        .map(|index| {
-            let name = format!("d{index:02}");
-            let from = format!("src/old{index}.rs");
-            let mut decision = sample_decision("project");
-            decision.anchors = [held(&from)].into();
-            write_node(&store, &NodeFile::Decision(name.clone()), &decision);
-            let to = format!("src/{}.rs", coin_flips(480, index));
-            repair(&name, anchor(&from, None), anchor(&to, None))
-        })
-        .collect();
-
-    let refusal = refused(&store, op(repairs));
-
-    let (name, _, message) = named(&refusal);
-    assert_eq!(name, "pattern_gave_up", "{message}");
-    let target = refusal.op.as_ref().map(|op| op.target.as_str());
-    assert!(target.is_some_and(|name| name > "d00"), "{message}");
-    assert!(message.contains("this op's texts alone"), "{message}");
 }

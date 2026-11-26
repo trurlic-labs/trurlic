@@ -11,8 +11,9 @@
 //! ever accepted that holds a stale anchor then, whatever the earlier ops,
 //! or another write in between, did to the graph; a map with nothing to
 //! repair repairs nothing and refuses nothing. The caller wrote none of
-//! these repairs, so none may refuse the batch: the store, under the lock,
-//! leaves one the bar refuses or cannot judge, with the rule as its cause.
+//! these repairs, so no verdict on one refuses the batch: the store, under
+//! the lock, leaves the repairs of a decision the bar refuses or cannot
+//! judge, with the rule as their cause.
 //! The result lists the repairs the store made and the stale anchors left,
 //! as many as the budget holds beside the rest of the result, and counts
 //! the others: `trurlic check` lists every stale anchor.

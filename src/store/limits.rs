@@ -64,32 +64,41 @@ pub(super) const MAX_PATTERN_BYTES: usize = 500;
 pub(super) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
 
 /// Code points the case-insensitive classes of one pattern may span:
-/// translating a pattern folds each such class code point by code point,
-/// and the sum is counted on its syntax tree before it is translated. A
-/// pattern past it is refused when compiled (`(?i)[\s\S]` spans every code
-/// point); a case-sensitive class, and a Perl class anywhere, fold nothing.
+/// translating a pattern folds each class it reads under the flag code
+/// point by code point, and the sum is counted on its syntax tree before it
+/// is translated, the flag scoped as translation scopes it. A pattern past
+/// it is refused when compiled; a case-sensitive class, and a Perl class
+/// anywhere, fold nothing. The bound admits one class of every code point
+/// under the flag, `(?i)[\s\S]` (1,114,112), and nearly as much again
+/// beside it, and refuses what nested brackets fold many times over. A
+/// table of 32 patterns at the bound compiles in about 0.15 s on one core.
 pub(super) const MAX_PATTERN_FOLDED_CODE_POINTS: u64 = 1 << 21;
 
 /// Bytes of cache the lazy DFA of one pattern may hold in each direction
 /// over one call. A pattern whose automaton cannot start within it is
 /// refused when compiled (`\w{9}`); a search that would outgrow it gives up
-/// instead of clearing it. It holds a word list of 48 words over a whole
-/// graph of English prose with room to spare.
+/// instead of clearing it. The costliest of 32 ordinary patterns, a list
+/// of 48 words under `(?i)`, grows its caches by about 224 KB over the 213
+/// decisions of English prose in `tests/fixtures/prose`, and by about 20 KB
+/// more each time the text doubles.
 pub(super) const MAX_PATTERN_CACHE_BYTES: usize = 320 * 1024;
 
 /// Bytes the caches of all the `[quality]` patterns, both directions, may
 /// grow by over one call: one `apply` batch, or one page of the `status`
 /// lint section. Growth is what building states costs, which the bytes
 /// read do not count. It is read from a pattern's caches after its search
-/// of an op or a decision, so it may pass the total by one pattern's two
-/// caches; past it the write is refused and the page ends. It holds a
-/// table of 32 ordinary patterns over a full batch of prose in many
-/// scripts.
+/// of each text, so it may pass the total by one search's growth, one
+/// pattern's two caches; past it the write is refused at that text and the
+/// page ends. What a search built stays charged, a repair the write leaves
+/// included. It holds a table of 32 ordinary patterns over a full batch of
+/// prose in many scripts.
 pub(crate) const MAX_PATTERN_CACHE_TOTAL_BYTES: usize = 1536 * 1024;
 
 /// Bytes the `[quality]` patterns may read over what one `apply` batch
 /// writes: each pattern charges the bytes of each text it searches, one
-/// more per search, before it runs. A write judges under the exclusive
+/// more per search, before it runs. The search back from a match's end to
+/// its start reads the match again, so the patterns read at most twice
+/// what they charge. A write judges under the exclusive
 /// lock, which another reader or writer waits for at most `LOCK_TIMEOUT`
 /// (5 s), so the bound is the write's own and lower than a report's; with
 /// [`MAX_PATTERN_CACHE_TOTAL_BYTES`] it bounds what the patterns cost a

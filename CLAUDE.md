@@ -114,6 +114,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 - Failpoints: `TRURLIC_FAILPOINT=<site>:<n>` (`TRURLIC_FAILPOINT_PAUSE` to pause instead of abort).
 - Format fixtures: `tests/fixtures/formats/<version>/`, each migrated, loaded and checked.
 - Code fixtures: `tests/fixtures/code/`; manifests are named `Cargo.toml.fixture`.
+- Prose fixture: `tests/fixtures/prose/`, fixed English decision text the `[quality]` caches are sized on.
 - Seeded corpus (`store::corpus`, `store::seeded`) feeds property tests and benches.
 - No test for coverage: each asserts a property someone could break.
 

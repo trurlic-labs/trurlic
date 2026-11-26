@@ -1,12 +1,12 @@
 //! The bar's judgement of a stored decision for a report: every rule it
 //! breaks, where a write stops at the first. The limits are judged apart
-//! from the patterns, and each pattern apart from the others, so a report
-//! chooses which to pay for; a pattern reads a decision as a write reads
-//! an op and its batch's origin.
+//! from the patterns, so a report chooses which to pay for; the patterns
+//! read a decision as a write reads an op and its batch's origin, over one
+//! [`Scan`] for the page.
 
 use std::borrow::Cow;
 
-use super::{Bar, Breach, Broken, PatternCache, PatternFault, Place, grown_most, searched, texts};
+use super::{Bar, Breach, Broken, PatternFault, Place, Scan, searched, texts};
 use crate::store::quality::{DecisionField, Level, Quality, QualityFault};
 use crate::store::schema::Decision;
 
@@ -17,9 +17,21 @@ pub struct Shortfall {
     pub field: DecisionField,
     /// The element of a list field, by its position in the decision's list.
     pub element: Option<usize>,
-    /// `refuse` for a limit and a give-up, the pattern's level for a match.
+    /// `refuse` for a limit, a give-up and the total, the pattern's level
+    /// for a match.
     pub level: Level,
     pub fault: QualityFault,
+}
+
+impl Shortfall {
+    const fn at(place: Place, level: Level, fault: QualityFault) -> Self {
+        Self {
+            field: place.field,
+            element: place.index,
+            level,
+            fault,
+        }
+    }
 }
 
 impl Bar {
@@ -49,10 +61,7 @@ impl Bar {
     pub(crate) fn pattern_bytes(&self, decision: &Decision) -> usize {
         let texts = audited(decision);
         let read = |pattern: &super::Compiled| {
-            let read = texts
-                .iter()
-                .filter(|(place, _)| pattern.fields.contains(&place.field));
-            searched(read.map(|(_, text)| text.as_ref()))
+            searched(pattern.read(&texts).into_iter().map(|(_, text)| text))
         };
         self.patterns
             .iter()
@@ -60,74 +69,42 @@ impl Bar {
             .fold(0, usize::saturating_add)
     }
 
-    /// The pattern at `index` of `[quality] patterns` against `decision` as
-    /// stored, at the pattern's level, searched over `cache`. First its
-    /// match in the stored `origin`, when it reads `origin`, as
-    /// [`Bar::judge_origin`] reads a batch's. Then its first match over the
-    /// other fields it reads, as [`Bar::judge_patterns`] reads an op's. A
-    /// write that recorded the decision would give both. A cache that gives
-    /// up ends the pattern's findings with that one, at `refuse`.
-    /// `require_origin` binds a batch that records, which a stored decision
-    /// is no longer.
-    pub(crate) fn audit_pattern(
+    /// The patterns, in their order, against `decision` as stored, each at
+    /// its level, over the page's `scan`. First a pattern's match in the
+    /// stored `origin`, when it reads `origin`, as [`Bar::judge_origin`]
+    /// reads a batch's; then its first match over the other fields it
+    /// reads, as [`Bar::judge_patterns`] reads an op's. A write that
+    /// recorded the decision would give both. A cache that gives up, or
+    /// caches that grow past their total, stop the patterns as they stop a
+    /// write: the matches before it, and that stop as a finding at
+    /// `refuse`. `require_origin` binds a batch that records, which a
+    /// stored decision is no longer.
+    pub(crate) fn audit_patterns(
         &self,
-        index: usize,
         decision: &Decision,
-        cache: &mut PatternCache,
-    ) -> Vec<Shortfall> {
-        let Some(pattern) = self.patterns.get(index) else {
-            return Vec::new();
-        };
+        scan: &mut Scan,
+    ) -> (Vec<Shortfall>, Option<Shortfall>) {
         let texts = audited(decision);
-        let (origin, fields): (Vec<_>, Vec<_>) = texts
-            .iter()
-            .filter(|(place, _)| pattern.fields.contains(&place.field))
-            .map(|(place, text)| (*place, text.as_ref()))
-            .partition(|(place, _)| place.field == DecisionField::Origin);
         let mut found = Vec::new();
-        for part in [origin, fields] {
-            match pattern.first_match(cache, part) {
-                Ok(Some((place, matched))) => found.push(Shortfall {
-                    field: place.field,
-                    element: place.index,
-                    level: pattern.level,
-                    fault: QualityFault::Pattern(pattern.matched(index, &matched)),
-                }),
-                Ok(None) => {}
-                Err(place) => {
-                    found.push(Shortfall {
-                        field: place.field,
-                        element: place.index,
-                        level: Level::Refuse,
-                        // A report lists a give-up only of a decision it
-                        // judged first, over empty caches.
-                        fault: QualityFault::GaveUp { index, alone: true },
-                    });
-                    break;
+        for (index, pattern) in self.patterns.iter().enumerate() {
+            let (origin, fields): (Vec<_>, Vec<_>) = pattern
+                .read(&texts)
+                .into_iter()
+                .partition(|(place, _)| place.field == DecisionField::Origin);
+            for part in [origin, fields] {
+                match scan.search(index, pattern, &part) {
+                    Ok(Some((place, matched))) => {
+                        let fault = QualityFault::Pattern(pattern.matched(index, &matched));
+                        found.push(Shortfall::at(place, pattern.level, fault));
+                    }
+                    Ok(None) => {}
+                    Err((place, fault)) => {
+                        return (found, Some(Shortfall::at(place, Level::Refuse, fault)));
+                    }
                 }
             }
         }
-        found
-    }
-
-    /// The finding of a decision over whose texts alone the caches of the
-    /// patterns grew past their total, each pattern's growth in `grown`: at
-    /// `refuse`, in the first field the pattern that grew the most reads.
-    pub(crate) fn cache_total(&self, grown: &[usize]) -> Shortfall {
-        let largest = grown_most(grown.iter().copied());
-        let reads = self.patterns.get(largest).map(|pattern| &pattern.fields);
-        let first = DecisionField::IN_FILE_ORDER
-            .into_iter()
-            .find(|field| reads.is_some_and(|fields| fields.contains(field)));
-        Shortfall {
-            field: first.unwrap_or(DecisionField::Choice),
-            element: None,
-            level: Level::Refuse,
-            fault: QualityFault::CacheTotal {
-                largest,
-                alone: true,
-            },
-        }
+        (found, None)
     }
 }
 
@@ -149,12 +126,7 @@ fn audited(decision: &Decision) -> Vec<(Place, Cow<'_, str>)> {
 /// bytes the patterns read.
 fn limit_shortfall(breach: Breach) -> Option<Shortfall> {
     match breach.broken {
-        Broken::Quality(fault) => Some(Shortfall {
-            field: breach.place.field,
-            element: breach.place.index,
-            level: Level::Refuse,
-            fault,
-        }),
+        Broken::Quality(fault) => Some(Shortfall::at(breach.place, Level::Refuse, fault)),
         Broken::Text { .. } | Broken::Work => None,
     }
 }
@@ -166,7 +138,7 @@ mod tests {
 
     use super::*;
     use crate::store::corpus::Corpus;
-    use crate::store::limits::MAX_PATTERN_CACHE_TOTAL_BYTES;
+    use crate::store::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES};
     use crate::store::quality::Scan;
     use crate::store::quality::{Hit, Pattern};
     use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, sample_decision};
@@ -181,16 +153,14 @@ mod tests {
         }
     }
 
-    /// Every rule `bar` finds `decision` breaks, the limits, then each
-    /// pattern in its order, each over a fresh cache.
+    /// Every rule `bar` finds `decision` breaks, the limits, then the
+    /// patterns in their order over fresh caches with no total, and what
+    /// stopped them.
     fn audit(bar: &Bar, decision: &Decision) -> Vec<Shortfall> {
-        let mut caches = bar.caches();
-        let patterns = caches
-            .iter_mut()
-            .enumerate()
-            .flat_map(|(index, cache)| bar.audit_pattern(index, decision, cache));
+        let mut scan = Scan::of(&bar.patterns, 0, usize::MAX);
+        let (patterns, stopped) = bar.audit_patterns(decision, &mut scan);
         let mut found = bar.audit_limits(decision);
-        found.extend(patterns);
+        found.extend(patterns.into_iter().chain(stopped));
         found
     }
 
@@ -274,35 +244,37 @@ mod tests {
         };
         let (limits, uncompiled) = Bar::for_report(&broken);
         assert_eq!(uncompiled.map(|fault| fault.index), Some(0));
-        assert!(limits.caches().is_empty());
+        assert!(limits.patterns.is_empty());
         assert_eq!(audit(&limits, &decision).len(), 5);
     }
 
-    /// A pattern whose cache gives up in a decision's origin gives that
-    /// finding, at `refuse` whatever its level, and judges no field after.
+    /// A pattern whose cache gives up in a decision's origin stops the
+    /// patterns there, as it stops a write: the give-up is the finding, at
+    /// `refuse` whatever its level, and neither a field after it nor a
+    /// later pattern that would match is judged.
     #[test]
-    fn a_give_up_is_a_refuse_finding_and_the_pattern_reads_no_further() {
+    fn a_give_up_is_a_refuse_finding_and_the_patterns_read_no_further() {
         let fields = [DecisionField::Origin, DecisionField::Choice];
         let table = Quality {
-            patterns: vec![pattern(OUTGROWS_ITS_CACHE, &fields, Level::Warn)],
+            patterns: vec![
+                pattern(OUTGROWS_ITS_CACHE, &fields, Level::Warn),
+                pattern("b", &fields, Level::Warn),
+            ],
             ..Quality::default()
         };
         let bar = Bar::compile(&table).unwrap();
         let mut decision = sample_decision("project");
         decision.choice = format!("a{}", "b".repeat(20));
         decision.origin = Some(coin_flips(12_000, 3));
-        let mut cache = bar.caches().remove(0);
 
-        let found = bar.audit_pattern(0, &decision, &mut cache);
+        let (found, stopped) = bar.audit_patterns(&decision, &mut bar.page_scan());
 
-        let first = found.first().map(|s| (s.field, s.level, &s.fault));
-        let gave_up = QualityFault::GaveUp {
-            index: 0,
-            alone: true,
-        };
+        assert_eq!(found, []);
+        let stopped = stopped.map(|s| (s.field, s.level, s.fault));
+        let gave_up = QualityFault::GaveUp { index: 0 };
         assert_eq!(
-            (found.len(), first),
-            (1, Some((DecisionField::Origin, Level::Refuse, &gave_up)))
+            stopped,
+            Some((DecisionField::Origin, Level::Refuse, gave_up))
         );
     }
 
@@ -571,11 +543,29 @@ mod tests {
                     .unwrap()
             })
             .collect();
-        let mut caches = bar.caches();
+        let mut scan = Scan::of(&bar.patterns, 0, usize::MAX);
         let mut matched = 0;
         for decision in decisions {
             let texts = audited(decision);
-            for (index, (pattern, cache)) in quality.patterns.iter().zip(&mut caches).enumerate() {
+            let (found, stopped) = bar.audit_patterns(decision, &mut scan);
+            assert_eq!(stopped, None, "{decision:?}");
+            let found: Vec<(usize, Place, usize)> = found
+                .iter()
+                .map(|s| match &s.fault {
+                    QualityFault::Pattern(found) => {
+                        let place = Place {
+                            field: s.field,
+                            index: s.element,
+                        };
+                        (found.index, place, found.at)
+                    }
+                    QualityFault::Limit { .. }
+                    | QualityFault::GaveUp { .. }
+                    | QualityFault::CacheTotal { .. }
+                    | QualityFault::OriginRequired => panic!("{s:?}"),
+                })
+                .collect();
+            for (index, pattern) in quality.patterns.iter().enumerate() {
                 let read = texts
                     .iter()
                     .filter(|(place, _)| pattern.fields.contains(&place.field));
@@ -583,22 +573,10 @@ mod tests {
                     let found = first[index].find(text)?;
                     Some((*place, found.start(), text))
                 });
-                let now = bar.audit_pattern(index, decision, cache);
-                let now: Vec<(Place, usize)> = now
+                let now: Vec<(Place, usize)> = found
                     .iter()
-                    .map(|s| match &s.fault {
-                        QualityFault::Pattern(found) => (
-                            Place {
-                                field: s.field,
-                                index: s.element,
-                            },
-                            found.at,
-                        ),
-                        QualityFault::Limit { .. }
-                        | QualityFault::GaveUp { .. }
-                        | QualityFault::CacheTotal { .. }
-                        | QualityFault::OriginRequired => panic!("{s:?}"),
-                    })
+                    .filter(|&&(of, ..)| of == index)
+                    .map(|&(_, place, at)| (place, at))
                     .collect();
                 let Some((place, at, text)) = before else {
                     assert_eq!(now, [], "{index} {decision:?}");
@@ -673,11 +651,29 @@ mod tests {
         }
     }
 
-    /// This repository's own decisions, English prose, in name order.
+    /// Decisions of English prose, fixed: the choice, reason, alternatives
+    /// and origin of each of this repository's decisions as they stood when
+    /// the caches were sized, in name order.
     fn english() -> Vec<Decision> {
-        let graph = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".trurlic");
-        let state = crate::store::Store::at(graph).load_state().unwrap();
-        state.decisions.into_values().collect()
+        #[derive(Deserialize)]
+        struct Prose {
+            choice: String,
+            reason: String,
+            alternatives: Vec<String>,
+            origin: Option<String>,
+        }
+        let lines = include_str!("../../../../tests/fixtures/prose/decisions.jsonl").lines();
+        lines
+            .map(|line| {
+                let prose: Prose = serde_json::from_str(line).unwrap();
+                let mut decision = sample_decision("project");
+                decision.choice = prose.choice;
+                decision.reason = prose.reason;
+                decision.alternatives = prose.alternatives;
+                decision.origin = prose.origin;
+                decision
+            })
+            .collect()
     }
 
     /// A reason of words in fifteen scripts, the letters of each drawn from
@@ -735,7 +731,6 @@ mod tests {
         let judged = bar.judge_origin(origin, &mut scan);
         judged.map_err(|breach| breach.broken)?;
         for decision in batch {
-            scan.begin_op();
             let all = DecisionField::IN_FILE_ORDER;
             let held = all.into_iter().filter(|&f| f != DecisionField::Origin);
             let texts: Vec<_> = held.flat_map(|f| texts(decision, f)).collect();
@@ -745,10 +740,10 @@ mod tests {
         Ok(total - scan.cache_left)
     }
 
-    /// Every full batch of fifty of this repository's decisions, English
-    /// prose, and the same with a reason in fifteen scripts beside it, fits
-    /// each pattern's cache and the write's total under 32 ordinary
-    /// patterns; so do the shipped table and this repository's.
+    /// Every full batch of fifty decisions of English prose, and the same
+    /// with a reason in fifteen scripts beside it, fits each pattern's cache
+    /// and the write's total under 32 ordinary patterns; so do the shipped
+    /// table and this repository's.
     #[test]
     fn a_full_batch_of_prose_fits_the_caches_and_the_total_of_an_ordinary_table() {
         let decisions = english();
@@ -770,6 +765,31 @@ mod tests {
         assert!(most > total / 4, "{most}");
     }
 
+    /// Each of 32 ordinary patterns judges a whole graph of English prose,
+    /// one page with no total, within its cache, and the one whose caches
+    /// grow the most, a list of 48 words, fills more than half of it.
+    #[test]
+    fn each_ordinary_pattern_judges_a_whole_graph_of_prose_within_its_cache() {
+        let decisions = english();
+        let mut most = 0;
+
+        for pattern in ordinary().patterns {
+            let one = Quality {
+                patterns: vec![pattern],
+                ..Quality::default()
+            };
+            let bar = Bar::compile(&one).unwrap();
+            let mut scan = Scan::of(&bar.patterns, 0, usize::MAX);
+            for decision in &decisions {
+                let (_, stopped) = bar.audit_patterns(decision, &mut scan);
+                assert_eq!(stopped, None, "{:?}", one.patterns);
+            }
+            most = most.max(usize::MAX - scan.cache_left);
+        }
+
+        assert!(most > MAX_PATTERN_CACHE_BYTES / 2, "{most}");
+    }
+
     /// The total of cache is exact: a write that may grow the caches by
     /// what a batch grows passes, and one byte less is refused as the
     /// total, naming the pattern that grew the most.
@@ -783,7 +803,7 @@ mod tests {
         let short = grown(&ordinary(), batch, needed - 1);
 
         assert_eq!(enough, Ok(needed));
-        let Err(Broken::Quality(QualityFault::CacheTotal { alone: false, .. })) = short else {
+        let Err(Broken::Quality(QualityFault::CacheTotal { .. })) = short else {
             panic!("{short:?}")
         };
     }

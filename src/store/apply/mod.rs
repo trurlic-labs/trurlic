@@ -373,13 +373,12 @@ fn run(
     Ok((done, named))
 }
 
-/// One op on the graph `edit` holds, its patterns told that it begins.
+/// One op on the graph `edit` holds.
 fn apply_op(
     edit: &mut Edit<'_>,
     op: Op,
     context: &mut Context<'_>,
 ) -> std::result::Result<Done, Fault> {
-    context.scan.begin_op();
     match op {
         Op::Record(op) => decision::record(edit, op, context),
         Op::Revise(op) => decision::revise(edit, op, context),

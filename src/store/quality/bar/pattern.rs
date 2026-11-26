@@ -5,18 +5,19 @@
 //! bounded in size. A search costs time linear in the bytes it reads once
 //! the states it walks are built, and it builds them in a cache of
 //! `MAX_PATTERN_CACHE_BYTES` per direction that gives up when full instead
-//! of clearing. A call's caches grow by `MAX_PATTERN_CACHE_TOTAL_BYTES`
-//! together at most, a pattern's two caches past it at the check
-//! ([`Scan`]), and what a call reads is the rest of its cost, charged in
-//! bytes ([`searched`]).
+//! of clearing. One call's patterns, a write's or a report page's, share
+//! one [`Scan`]: their caches grow by `MAX_PATTERN_CACHE_TOTAL_BYTES`
+//! together, past it by one search at most, and what they read is the rest
+//! of their cost, charged in bytes ([`searched`]).
 
+use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
 use regex_automata::hybrid::dfa;
 use regex_automata::hybrid::regex::{Cache, Regex};
 use regex_automata::nfa::thompson::{self, NFA, WhichCaptures};
-use regex_automata::{Input, Match, MatchKind};
+use regex_automata::{Input, Match, MatchError, MatchKind};
 use regex_syntax::ast;
 use regex_syntax::hir::Hir;
 use regex_syntax::hir::translate::Translator;
@@ -92,26 +93,22 @@ impl Compiled {
         self.regex.create_cache()
     }
 
-    /// The first of `texts` this pattern matches, with its place, searched
-    /// in order over `cache`; the place of the text it gave up on, its
-    /// cache full.
-    pub(super) fn first_match<'t>(
-        &self,
-        cache: &mut Cache,
-        texts: impl IntoIterator<Item = (Place, &'t str)>,
-    ) -> Result<Option<(Place, Found<'t>)>, Place> {
-        for (place, text) in texts {
-            // The only error the configuration admits is a give-up: no byte
-            // quits the search, and it is unanchored over the whole text.
-            let found = self
-                .regex
-                .try_search(cache, &Input::new(text))
-                .map_err(|_gave_up| place)?;
-            if let Some(found) = found {
-                return Ok(Some((place, Found::of(text, found))));
-            }
-        }
-        Ok(None)
+    /// Those of `texts` in the fields this pattern reads, in their order.
+    pub(super) fn read<'t>(&self, texts: &'t [(Place, Cow<'_, str>)]) -> Vec<(Place, &'t str)> {
+        texts
+            .iter()
+            .filter(|(place, _)| self.fields.contains(&place.field))
+            .map(|(place, text)| (*place, text.as_ref()))
+            .collect()
+    }
+
+    /// The first match of this pattern in `text`, searched over `cache`;
+    /// the error the search gave when the cache gave up, full. No byte
+    /// quits the search, and it is unanchored over the whole text, so a
+    /// give-up is the only error the configuration admits.
+    fn find<'t>(&self, cache: &mut Cache, text: &'t str) -> Result<Option<Found<'t>>, MatchError> {
+        let found = self.regex.try_search(cache, &Input::new(text))?;
+        Ok(found.map(|found| Found::of(text, found)))
     }
 
     /// The match `found` at `place` of this pattern, the one at `index`:
@@ -205,7 +202,9 @@ fn nfa(hir: &Hir, reverse: bool) -> Result<NFA, String> {
 }
 
 /// The bytes a search over each of `texts` charges: its length, and one
-/// more for the search itself, so that empty texts are not free.
+/// more for the search itself, so that empty texts are not free. A match's
+/// bytes are read twice, forward to its end and back to its start, so a
+/// search reads at most twice what it charges.
 pub(super) fn searched<'t>(texts: impl IntoIterator<Item = &'t str>) -> usize {
     texts
         .into_iter()
@@ -213,17 +212,18 @@ pub(super) fn searched<'t>(texts: impl IntoIterator<Item = &'t str>) -> usize {
         .fold(0, usize::saturating_add)
 }
 
-/// What one write's patterns may still read and build, and each pattern's
-/// cache, all the batch's: the bytes of every search are charged against
-/// one bound, and the growth of every cache, both directions, against one
-/// total of cache.
+/// What one call's patterns may still read and build, a write's or a
+/// report page's, and each pattern's cache, the call's. The bytes of every
+/// search are charged against one bound before it runs, and the growth of
+/// every cache, both directions, against one total after each text a
+/// pattern searches: the caches pass the total by one search's growth at
+/// most, one pattern's two caches. What a search spent stays charged,
+/// whatever becomes of its verdict.
 pub(crate) struct Scan {
-    pub(super) caches: Vec<Cache>,
-    /// The memory of each cache before the batch's first op, which its
-    /// growth is measured from.
-    pub(super) fresh: Vec<usize>,
-    /// The memory of each cache when the op being judged began.
-    pub(super) at_op: Vec<usize>,
+    caches: Vec<Cache>,
+    /// The memory of each cache when the call began, which its growth is
+    /// measured from.
+    fresh: Vec<usize>,
     /// The bytes the patterns may still read.
     pub(super) left: usize,
     /// The bytes of cache the automata may still add, all patterns
@@ -236,85 +236,75 @@ impl Scan {
     /// grow by.
     pub(super) fn of(patterns: &[Compiled], bytes: usize, cache_bytes: usize) -> Self {
         let caches: Vec<Cache> = patterns.iter().map(Compiled::cache).collect();
-        let fresh: Vec<usize> = caches.iter().map(Cache::memory_usage).collect();
         Self {
-            // clone: what the caches hold before the first op is also what
-            // they hold when it begins.
-            at_op: fresh.clone(),
-            fresh,
+            fresh: caches.iter().map(Cache::memory_usage).collect(),
             caches,
             left: bytes,
             cache_left: cache_bytes,
         }
     }
 
-    /// Count what the caches hold now as theirs before any op: the batch's
-    /// origin is no op, and splitting the batch would not shed it.
-    pub(super) fn settle(&mut self) {
-        self.fresh = self.caches.iter().map(Cache::memory_usage).collect();
-        // clone: no op has begun.
-        self.at_op = self.fresh.clone();
-    }
-
-    /// Mark the start of an op: what the caches hold now, the ops' before
-    /// it, tells whether its texts alone filled them.
-    pub(crate) fn begin_op(&mut self) {
-        self.at_op = self.caches.iter().map(Cache::memory_usage).collect();
-    }
-
-    /// Whether no op before the one being judged grew a cache.
-    pub(super) fn is_alone(&self) -> bool {
-        self.at_op == self.fresh
-    }
-
-    /// The first match of `pattern`, the one at `index`, over `read`,
-    /// charged first: its bytes against what is left, refused at its first
-    /// text past it; then a search over its cache, refused where the cache
-    /// gave up; then the cache's growth against the total, `Err(place)` at
-    /// the match or the last text past it.
-    pub(super) fn search<'t>(
-        &mut self,
-        index: usize,
-        pattern: &Compiled,
-        read: Vec<(Place, &'t str)>,
-    ) -> Result<Result<Option<(Place, Found<'t>)>, Place>, Breach> {
-        let (Some(&(first, _)), Some(&(last, _))) = (read.first(), read.last()) else {
-            return Ok(Ok(None));
+    /// Charge the bytes of the searches over `read` against what is left,
+    /// before any of them runs: past it, refused at the first of them.
+    pub(super) fn charge(&mut self, read: &[(Place, &str)]) -> Result<(), Breach> {
+        let Some(&(first, _)) = read.first() else {
+            return Ok(());
         };
         let bytes = searched(read.iter().map(|&(_, text)| text));
         self.left = self.left.checked_sub(bytes).ok_or(Breach {
             place: first,
             broken: Broken::Work,
         })?;
-        // A cache no earlier op grew was filled by this op's texts alone.
-        let alone = self.fresh.get(index) == self.at_op.get(index);
+        Ok(())
+    }
+
+    /// The first match of `pattern`, the one at `index`, over `read`, text
+    /// by text over its cache, each search's growth charged against the
+    /// total: the place of the text where the cache gave up, or where the
+    /// growth passed what was left, and the fault. Growth past the total
+    /// spends it whole, and a cache that gave up is emptied, so a call that
+    /// goes on past the fault, a write leaving a repair, builds again only
+    /// what it charges.
+    pub(super) fn search<'t>(
+        &mut self,
+        index: usize,
+        pattern: &Compiled,
+        read: &[(Place, &'t str)],
+    ) -> Result<Option<(Place, Found<'t>)>, (Place, QualityFault)> {
         let Some(cache) = self.caches.get_mut(index) else {
-            return Ok(Ok(None));
+            return Ok(None);
         };
-        let before = cache.memory_usage();
-        let found = pattern.first_match(cache, read).map_err(|place| Breach {
-            place,
-            broken: Broken::Quality(QualityFault::GaveUp { index, alone }),
-        })?;
-        let grown = cache.memory_usage().saturating_sub(before);
-        let Some(rest) = self.cache_left.checked_sub(grown) else {
-            return Ok(Err(found.as_ref().map_or(last, |&(place, _)| place)));
-        };
-        self.cache_left = rest;
-        Ok(Ok(found))
+        for &(place, text) in read {
+            let before = cache.memory_usage();
+            let found = pattern.find(cache, text);
+            let grown = cache.memory_usage().saturating_sub(before);
+            let within = self.cache_left.checked_sub(grown);
+            self.cache_left = within.unwrap_or(0);
+            let found = match found {
+                Ok(found) => found,
+                Err(_gave_up) => {
+                    cache.reset(&pattern.regex);
+                    return Err((place, QualityFault::GaveUp { index }));
+                }
+            };
+            if within.is_none() {
+                let largest = self.largest();
+                return Err((place, QualityFault::CacheTotal { largest }));
+            }
+            if let Some(found) = found {
+                return Ok(Some((place, found)));
+            }
+        }
+        Ok(None)
     }
 
-    /// The index of the pattern whose caches grew the most.
-    pub(super) fn largest(&self) -> usize {
-        let grown = self.caches.iter().zip(&self.fresh);
-        grown_most(grown.map(|(cache, &fresh)| cache.memory_usage().saturating_sub(fresh)))
+    /// The index of the pattern whose caches hold the most they built over
+    /// the call, the first of equals, `0` for none.
+    fn largest(&self) -> usize {
+        let grown = self.caches.iter().zip(&self.fresh).enumerate();
+        let ranked = grown.map(|(index, (cache, &fresh))| {
+            (cache.memory_usage().saturating_sub(fresh), Reverse(index))
+        });
+        ranked.max().map_or(0, |(_, Reverse(index))| index)
     }
-}
-
-/// The index of the pattern of `grown`, each pattern's growth in their
-/// order, that grew the most: the first of them, `0` for none.
-pub(super) fn grown_most(grown: impl IntoIterator<Item = usize>) -> usize {
-    let ranked = grown.into_iter().enumerate();
-    let ranked = ranked.map(|(index, grown)| (grown, Reverse(index)));
-    ranked.max().map_or(0, |(_, Reverse(index))| index)
 }

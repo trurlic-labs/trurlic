@@ -13,8 +13,8 @@ mod tests {
     use crate::code::{AllowList, faults};
 
     /// What `lint` may name: the code index's facts, the graph's value
-    /// types, the bar and the cache in memory its patterns search over, the
-    /// store's constant limits, and the thread pool's parallel iterators,
+    /// types, the bar, the store's constant limits, and the thread pool's
+    /// parallel iterators,
     /// whose schedule no result depends on (the passes' tests at one thread
     /// and eight hold it).
     const LINT: AllowList = AllowList {
@@ -23,7 +23,6 @@ mod tests {
             "Anchor",
             "Bar",
             "Decision",
-            "PatternCache",
             "ProjectState",
             "QualityFault",
             "Shortfall",

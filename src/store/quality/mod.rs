@@ -27,7 +27,7 @@ use crate::store::Store;
 use crate::store::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES};
 use crate::{Error, Result};
 
-pub(crate) use bar::{Bar, Breach, Broken, Hit, PatternCache, Place, Scan, element, texts};
+pub(crate) use bar::{Bar, Breach, Broken, Hit, Place, Scan, element, texts};
 pub use bar::{PatternFault, Shortfall};
 
 pub use config::{ConfigFault, Level, Pattern, Quality, WordRange};
@@ -145,14 +145,12 @@ pub enum QualityFault {
     /// A `refuse` pattern matched.
     Pattern(PatternMatch),
     /// The pattern at `index` of `[quality] patterns` gave up, whatever its
-    /// level: its automaton outgrew its cache over the texts it read, this
-    /// op's or decision's `alone` or those before them too, so it judged no
-    /// text after this one.
-    GaveUp { index: usize, alone: bool },
+    /// level: its automaton outgrew its cache over the texts the call read
+    /// so far, so it judged no text after this one.
+    GaveUp { index: usize },
     /// The automata of all the patterns grew past the total one call may
-    /// build, over this op's or decision's texts `alone` or those before
-    /// them too; the pattern at `largest` grew the most.
-    CacheTotal { largest: usize, alone: bool },
+    /// build over this text; the pattern at `largest` grew the most.
+    CacheTotal { largest: usize },
     /// The batch records a decision without an `origin`, and
     /// `require_origin` is set.
     OriginRequired,
@@ -172,23 +170,9 @@ impl QualityFault {
     }
 }
 
-/// What filled, `what`, then the remedy when the texts of one op filled
-/// the caches `alone`, else when the ops before it did too, for the
-/// pattern `named`.
-fn remedy(f: &mut fmt::Formatter<'_>, what: &str, alone: bool, named: &str) -> fmt::Result {
-    write!(f, "{what}, ")?;
-    if alone {
-        write!(
-            f,
-            "on this op's texts alone; simplify {named}, or write the text shorter"
-        )
-    } else {
-        write!(
-            f,
-            "over this op's texts and the ops' before it; split the batch, or simplify {named}"
-        )
-    }
-}
+/// What fixes a cache that gave up or the caches past their total: less
+/// text over one call, or a pattern that builds fewer states.
+const REMEDY: &str = "shorten the text, split the batch, or simplify";
 
 /// A `measured` count past the `bound` of `limit`, with its unit and its
 /// source.
@@ -211,22 +195,18 @@ impl fmt::Display for QualityFault {
                 bound,
             } => past(f, limit, *measured, *bound),
             Self::Pattern(found) => write!(f, "{found}"),
-            &Self::GaveUp { index, alone } => {
-                let what = format!(
-                    "`[quality] patterns[{index}]` gave up here: its automaton outgrew the \
-                     {MAX_PATTERN_CACHE_BYTES} bytes of cache one pattern may fill"
-                );
-                remedy(f, &what, alone, "the pattern")
-            }
-            &Self::CacheTotal { largest, alone } => {
-                let named = format!("`[quality] patterns[{largest}]`");
-                let what = format!(
-                    "the `[quality]` patterns' automata grew here past the \
-                     {MAX_PATTERN_CACHE_TOTAL_BYTES} bytes of cache one write may build, {named} \
-                     the most"
-                );
-                remedy(f, &what, alone, &named)
-            }
+            Self::GaveUp { index } => write!(
+                f,
+                "`[quality] patterns[{index}]` gave up here: its automaton outgrew the \
+                 {MAX_PATTERN_CACHE_BYTES} bytes of cache one pattern may fill; {REMEDY} the \
+                 pattern"
+            ),
+            Self::CacheTotal { largest } => write!(
+                f,
+                "the `[quality]` patterns' automata grew here past the \
+                 {MAX_PATTERN_CACHE_TOTAL_BYTES} bytes of cache one write may build, \
+                 `[quality] patterns[{largest}]` the most; {REMEDY} that pattern"
+            ),
             Self::OriginRequired => f.write_str(
                 "is required: the batch records a decision, and `[quality] require_origin` \
                  is set",

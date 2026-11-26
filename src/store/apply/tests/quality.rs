@@ -710,7 +710,7 @@ fn a_pattern_refusal_comes_before_a_later_op_fault() {
 
 /// `copies` copies of a pattern no cache holds over random letters, at
 /// `warn` over the origin, which every batch of these tests holds, and
-/// `reason`: an op whose caches only the origin grew is judged alone.
+/// `reason`.
 fn outgrowing(tmp: &TempDir, copies: usize) -> Store {
     let one = format!(
         "[[quality.patterns]]\npattern = '{OUTGROWS_ITS_CACHE}'\nfields = [\"origin\", \"reason\"]\n\
@@ -728,8 +728,8 @@ fn random(index: u64, letters: usize) -> Op {
 
 /// The caches of a batch's patterns are the batch's: two records whose
 /// reasons each fit a pattern's cache, but not together, are refused at
-/// the second as `pattern_gave_up`, naming the pattern whatever its level
-/// and the ops before as the cause, and each alone is written.
+/// the second as `pattern_gave_up`, naming the pattern whatever its level,
+/// and each alone is written.
 #[test]
 fn a_pattern_whose_cache_fills_over_the_batch_refuses_it_at_that_op() {
     let tmp = TempDir::new().unwrap();
@@ -739,39 +739,17 @@ fn a_pattern_whose_cache_fills_over_the_batch_refuses_it_at_that_op() {
     let refusal = refused(&store, ops.clone());
 
     assert_eq!(refusal.path(), "ops[1].reason");
-    let gave_up = QualityFault::GaveUp {
-        index: 0,
-        alone: false,
-    };
+    let gave_up = QualityFault::GaveUp { index: 0 };
     assert_eq!(refusal.rule, Rule::Quality(gave_up));
-    assert!(refusal.to_string().contains("split the batch"), "{refusal}");
     for op in ops {
         apply(&store, vec![op]).unwrap();
     }
 }
 
-/// A pattern whose cache fills over one op's texts alone is refused there
-/// with the remedy for that op, not the batch's.
-#[test]
-fn a_pattern_whose_cache_fills_over_one_op_names_that_op_alone() {
-    let tmp = TempDir::new().unwrap();
-    let store = outgrowing(&tmp, 1);
-
-    let refusal = refused(&store, vec![random(0, 12_000)]);
-
-    let gave_up = QualityFault::GaveUp {
-        index: 0,
-        alone: true,
-    };
-    assert_eq!(refusal.rule, Rule::Quality(gave_up));
-    let message = refusal.to_string();
-    assert!(!message.contains("split the batch"), "{message}");
-}
-
 /// Patterns whose caches each hold an op's texts but grow past
 /// `MAX_PATTERN_CACHE_TOTAL_BYTES` together refuse the write as
 /// `pattern_cache_total`, naming the pattern that grew the most, the first
-/// of equals, and the one op alone; fewer of them write it.
+/// of equals; fewer of them write it.
 #[test]
 fn caches_that_grow_past_their_total_refuse_the_write() {
     let tmp = TempDir::new().unwrap();
@@ -779,10 +757,7 @@ fn caches_that_grow_past_their_total_refuse_the_write() {
 
     let refusal = refused(&store, vec![random(0, 3_000)]);
 
-    let total = QualityFault::CacheTotal {
-        largest: 0,
-        alone: true,
-    };
+    let total = QualityFault::CacheTotal { largest: 0 };
     assert_eq!(refusal.rule, Rule::Quality(total));
     let tmp = TempDir::new().unwrap();
     apply(&outgrowing(&tmp, 4), vec![random(0, 3_000)]).unwrap();

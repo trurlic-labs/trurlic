@@ -12,7 +12,7 @@
 //! refusal names that decision, and the repair when one was listed. A
 //! change of anchors leaves the status alone.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::check::{Fault, Sources};
 use super::decision::Context;
@@ -20,8 +20,9 @@ use super::edit::Edit;
 use super::ops::{AnchorInput, Field, OpKind, Repair, RepairAnchors};
 use super::refusal::{NodeKind, Rule};
 use super::{Done, LeftRepair, Repaired};
-use crate::store::quality::{Breach, DecisionField, Hit, texts};
+use crate::store::quality::{Bar, Breach, DecisionField, Hit, Place, Scan, texts};
 use crate::store::schema::{Anchor, Decision};
+use crate::store::state::ProjectState;
 
 /// One anchor replaced, and whether its decision gained the new anchor,
 /// which it did not hold before.
@@ -40,8 +41,7 @@ pub(super) fn repair_anchors(
     let changes = match op {
         RepairAnchors::Listed(repairs) => {
             let changes = listed(edit, repairs)?;
-            let given = changes.iter().map(|c| c.repaired.to.to_string()).collect();
-            judge_gained(edit, &changes, given, context)?;
+            judge_listed(edit, &changes, context)?;
             changes
         }
         RepairAnchors::Every(map) => admitted(edit, &map, context),
@@ -116,82 +116,90 @@ fn replace(edit: &mut Edit<'_>, index: usize, repair: Repair) -> Result<Change, 
     })
 }
 
-/// Each anchor `map` holds a repair of, replaced in every decision ever
-/// accepted that holds it now, by decision and anchor; a decision never
-/// accepted plans its anchors, which no repair moves.
-fn every(edit: &mut Edit<'_>, map: &BTreeMap<Anchor, Anchor>) -> Vec<Change> {
-    let holders: Vec<(String, Vec<Anchor>)> = edit
-        .state()
+/// The decisions ever accepted that hold an anchor `map` holds a repair
+/// of, by name; a decision never accepted plans its anchors, which no
+/// repair moves.
+fn holders(state: &ProjectState, map: &BTreeMap<Anchor, Anchor>) -> Vec<String> {
+    let holds = |decision: &Decision| decision.anchors.iter().any(|a| map.contains_key(a));
+    state
         .decisions
         .iter()
-        .filter(|(_, decision)| decision.status.ever_accepted())
-        .filter_map(|(name, decision)| {
-            // clone: the anchors are replaced in the decision they are read from.
-            let held: Vec<Anchor> = decision
-                .anchors
-                .iter()
-                .filter(|anchor| map.contains_key(*anchor))
-                .cloned()
-                .collect();
-            // clone: the change names the decision past this borrow.
-            (!held.is_empty()).then(|| (name.clone(), held))
-        })
-        .collect();
-    let mut changes = Vec::new();
-    for (name, held) in holders {
-        let Some(decision) = edit.decision_mut(&name) else {
-            continue;
+        .filter(|(_, decision)| decision.status.ever_accepted() && holds(decision))
+        // clone: the decision is changed past this borrow of the graph.
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// Each anchor of `decision`, the one named `name`, that `map` holds a
+/// repair of, replaced by it, in the order of the anchors.
+fn replaced(decision: &mut Decision, name: &str, map: &BTreeMap<Anchor, Anchor>) -> Vec<Change> {
+    let stale = decision
+        .anchors
+        .iter()
+        .filter(|anchor| map.contains_key(*anchor));
+    // clone: the anchors are replaced in the set they are read from.
+    let stale: Vec<Anchor> = stale.cloned().collect();
+    let mut changes = Vec::with_capacity(stale.len());
+    for from in stale {
+        let Some(to) = map.get(&from) else { continue };
+        decision.anchors.remove(&from);
+        // clone: one repair of the map serves every decision holding it.
+        let gained = decision.anchors.insert(to.clone());
+        let repaired = Repaired {
+            decision: name.to_owned(),
+            from,
+            // clone: the decision holds the repair, and the result names it.
+            to: to.clone(),
         };
-        for from in held {
-            let Some(to) = map.get(&from) else { continue };
-            decision.anchors.remove(&from);
-            // clone: one repair of the map serves every decision holding it.
-            let gained = decision.anchors.insert(to.clone());
-            let repaired = Repaired {
-                // clone: each change names its decision.
-                decision: name.clone(),
-                from,
-                // clone: the decision holds the repair, and the result names it.
-                to: to.clone(),
-            };
-            changes.push(Change { repaired, gained });
-        }
+        changes.push(Change { repaired, gained });
     }
     changes
 }
 
+/// The anchors `changes` brought `decision` that it did not hold before,
+/// together, held to the patterns over `scan`: their `warn` matches, each
+/// with where it is, or what stopped them.
+fn judged(
+    bar: &Bar,
+    decision: &Decision,
+    changes: &[&Change],
+    scan: &mut Scan,
+) -> Result<Vec<(Place, Hit)>, Breach> {
+    let gained: BTreeSet<String> = changes
+        .iter()
+        .filter(|change| change.gained)
+        .map(|change| change.repaired.to.to_string())
+        .collect();
+    let mut read = texts(decision, DecisionField::Anchors);
+    read.retain(|(_, text)| gained.contains(text.as_ref()));
+    bar.judge_patterns(&read, scan)
+}
+
 /// Hold each decision `changes` changed to the patterns in the anchors it
 /// gained, by name, its warnings joining the op's. An anchor a listed
-/// repair brought is named by its index in `given`, the caller's list of
-/// new anchors; a refusal names the decision at fault.
-fn judge_gained(
+/// repair brought is named by its index in the op's list of repairs; a
+/// refusal names the decision at fault.
+fn judge_listed(
     edit: &Edit<'_>,
     changes: &[Change],
-    given: Vec<String>,
     context: &mut Context<'_>,
 ) -> Result<(), Fault> {
-    let mut gained: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    for change in changes.iter().filter(|change| change.gained) {
-        let Repaired { decision, to, .. } = &change.repaired;
-        gained
-            .entry(decision.as_str())
-            .or_default()
-            .push(to.to_string());
-    }
     let mut sources = Sources::default();
+    let given = changes.iter().map(|c| c.repaired.to.to_string()).collect();
     sources.add(DecisionField::Anchors, Field::Repairs, given);
-    let changed = edit
-        .state()
-        .decisions
+    let names: BTreeSet<&str> = changes
         .iter()
-        .filter_map(|(name, decision)| {
-            let anchors = gained.get(name.as_str())?;
-            Some((name, decision, anchors))
-        });
-    for (name, decision, anchors) in changed {
-        let mut read = texts(decision, DecisionField::Anchors);
-        read.retain(|(_, text)| anchors.iter().any(|anchor| anchor.as_str() == text));
-        let hits = context.bar.judge_patterns(&read, &mut context.scan);
+        .map(|change| change.repaired.decision.as_str())
+        .collect();
+    for name in names {
+        let Some(decision) = edit.state().decisions.get(name) else {
+            continue;
+        };
+        let own: Vec<&Change> = changes
+            .iter()
+            .filter(|change| change.repaired.decision == name)
+            .collect();
+        let hits = judged(context.bar, decision, &own, &mut context.scan);
         let hits = hits.map_err(|breach| Fault {
             target: Some(name.to_owned()),
             ..sources.fault(decision, breach)
@@ -204,63 +212,75 @@ fn judge_gained(
     Ok(())
 }
 
-/// The changes of the "every repair" `map` the patterns admit, each anchor a
-/// decision gained judged alone, its warnings joining the op's. The caller
-/// wrote none of them, so none refuses the batch: one the patterns refuse
-/// or cannot judge (a `refuse` match, a give-up, the cache total, the
-/// bytes bound) is undone and left, with its rule.
+/// The repairs of the "every repair" `map` the patterns admit, judged by
+/// the anchor they bring: in each decision holding a stale anchor, its
+/// anchors replaced, each repair it gained is held to the patterns. The
+/// caller wrote none of them, so none refuses the batch: a repair the
+/// patterns refuse or cannot judge (a `refuse` match, a give-up, the cache
+/// total, the bytes bound) is undone in every change that brought it, each
+/// stale anchor it replaced put back and left with the rule.
 fn admitted(
     edit: &mut Edit<'_>,
     map: &BTreeMap<Anchor, Anchor>,
     context: &mut Context<'_>,
 ) -> Vec<Change> {
-    let changes = every(edit, map);
-    let mut kept = Vec::with_capacity(changes.len());
-    for change in changes {
-        let Repaired { decision, from, to } = &change.repaired;
-        let held = edit.state().decisions.get(decision);
-        let judged = held
-            .filter(|_| change.gained)
-            .map(|held| judge_alone(held, to, context));
-        match judged {
-            Some(Err(breach)) => {
-                if let Some(held) = edit.decision_mut(decision) {
-                    held.anchors.remove(to);
-                    // clone: the decision holds the stale anchor again, and
-                    // the result names it.
-                    held.anchors.insert(from.clone());
-                }
-                let rule = breach.broken.into();
-                context.left.push(LeftRepair {
-                    repaired: change.repaired,
-                    rule,
-                });
-            }
-            Some(Ok(hits)) => {
-                context.hits.extend::<Vec<_>>(hits);
+    let mut kept = Vec::new();
+    for name in holders(edit.state(), map) {
+        let Some(decision) = edit.decision_mut(&name) else {
+            continue;
+        };
+        let changes = replaced(decision, &name, map);
+        let refused = refused(decision, &changes, context);
+        for change in changes {
+            let Some(rule) = refused.get(&change.repaired.to) else {
                 kept.push(change);
+                continue;
+            };
+            if change.gained {
+                decision.anchors.remove(&change.repaired.to);
             }
-            // A repair to an anchor the decision held already gains none.
-            None => kept.push(change),
+            // clone: the decision and the repair left both name it.
+            decision.anchors.insert(change.repaired.from.clone());
+            context.left.push(LeftRepair {
+                repaired: change.repaired,
+                // clone: each repair left names the rule.
+                rule: rule.clone(),
+            });
         }
     }
     kept
 }
 
-/// The anchor `to` that `held` gained, alone, held to the patterns over the
-/// batch's caches: its `warn` matches under the anchors field, or what
-/// stopped them.
-fn judge_alone(
-    held: &Decision,
-    to: &Anchor,
+/// The repairs of `changes` the patterns refuse or cannot judge in
+/// `decision`, each with the rule: each repair it gained judged on its own
+/// over the batch's scan, the warnings of the others joining the op's.
+/// What judging one read and built stays charged, as every search's does
+/// ([`Scan`]), and a cache that gave up on it is emptied.
+fn refused(
+    decision: &Decision,
+    changes: &[Change],
     context: &mut Context<'_>,
-) -> Result<Vec<(String, Hit)>, Breach> {
-    let text = to.to_string();
-    let mut read = texts(held, DecisionField::Anchors);
-    read.retain(|(_, anchor)| *anchor == text);
-    let hits = context.bar.judge_patterns(&read, &mut context.scan)?;
-    let field = || DecisionField::Anchors.as_str().to_owned();
-    Ok(hits.into_iter().map(|(_, hit)| (field(), hit)).collect())
+) -> BTreeMap<Anchor, Rule> {
+    let repairs: BTreeSet<&Anchor> = changes.iter().map(|change| &change.repaired.to).collect();
+    let mut refused = BTreeMap::new();
+    for to in repairs {
+        let brought: Vec<&Change> = changes
+            .iter()
+            .filter(|change| change.repaired.to == *to)
+            .collect();
+        match judged(context.bar, decision, &brought, &mut context.scan) {
+            Ok(hits) => {
+                let field = || DecisionField::Anchors.as_str().to_owned();
+                let located = hits.into_iter().map(|(_, hit)| (field(), hit));
+                context.hits.extend(located);
+            }
+            Err(breach) => {
+                // clone: the rule is read by every change that brought it.
+                refused.insert(to.clone(), breach.broken.into());
+            }
+        }
+    }
+    refused
 }
 
 /// `input` as an anchor, or the rule it breaks.

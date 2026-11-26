@@ -1,27 +1,39 @@
 component = "store"
 choice = "repair_anchors takes listed repairs, all or none, or a map from stale anchor to repair, of which the store leaves a repair the bar refuses or cannot judge; the store reads no code"
-reason = "The store imports no code index and runs no project git, so which anchor repairs which is the caller's. A listed repair is held to what every op is held to: the decision exists, it holds from, from and to are anchors by the anchor rules, and to differs from from, each refusal naming repairs[j] and the part at fault; an empty list is no_repair. A map is applied where the op runs to every decision ever accepted that holds a key, so a planned anchor is never moved, and a key no decision holds is passed over. A repair to an anchor the decision holds already drops the stale one rather than refusing. A repair never grows a decision's list, so the limits on the whole list are not judged. Each anchor a repair brings is held to the patterns alone, as the op runs, over the caches and the bytes of the batch. A listed repair the bar refuses refuses the batch, naming that decision as the op's node and the repair that brought the anchor. A repair of the map the bar refuses, or a pattern cannot judge, is undone and left in Applied::left with its rule, and the others are written: the caller wrote none of them. A change of anchors leaves the status alone. Applied::repaired lists each anchor replaced."
+reason = "The store imports no code index and runs no project git, so which anchor repairs which is the caller's. A listed repair is held to what every op is held to: the decision exists, it holds from, from and to are anchors by the anchor rules, and to differs from from, each refusal naming repairs[j] and the part at fault; an empty list is no_repair. A map is applied where the op runs to every decision ever accepted that holds a key, so a planned anchor is never moved, and a key no decision holds is passed over. A repair to an anchor the decision holds already drops the stale one rather than refusing. A repair never grows a decision's list, so the limits on the whole list are not judged. Each anchor a repair brings is held to the patterns, never those the decision held, as the op runs, over the caches and the bytes of the batch. A listed repair the bar refuses refuses the batch, naming that decision as the op's node and the repair that brought the anchor. A repair of the map the bar refuses, or a pattern cannot judge, is undone in every change that brought it, each stale anchor it replaced put back, and left in Applied::left with its rule; the others are written, since the caller wrote none of them. What judging a left repair read and built stays charged to the batch, so a map of many repairs spends the write's bounds once, and a cache that gave up on it is emptied, so it fills no cache a later op reads. A change of anchors leaves the status alone. Applied::repaired lists each anchor replaced."
 alternatives = [
     "Refuse a repair to an anchor the decision holds already: rejected because every repair the tree shows would then fail on a decision that held both",
     "Judge a repaired decision on its whole list: rejected because one decision already past anchors_max, or one holding an anchor a pattern refuses, would block every repair of the tree",
     "Let the store compute the repairs: rejected because store imports only error, console and git for its own repository",
     "Refuse the batch on a repair of the map the bar refuses: rejected because the caller wrote none of them, and an earlier op filling a cache would turn a repair into the batch's refusal",
+    "Leave every repair of a decision once one of them is left: rejected because a decision holding one anchor whose repair the bar refuses would keep its other stale anchors at every run",
 ]
 tags = [
     "anchors",
     "apply",
 ]
-status = "accepted"
+status = "proposed"
 origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"
 anchors = [
     { file = "src/store/apply/ops.rs", symbol = "Repair" },
     { file = "src/store/apply/ops.rs", symbol = "RepairAnchors" },
     { file = "src/store/apply/repair.rs", symbol = "admitted" },
-    { file = "src/store/apply/repair.rs", symbol = "judge_gained" },
+    { file = "src/store/apply/repair.rs", symbol = "judge_listed" },
     { file = "src/store/apply/repair.rs", symbol = "repair_anchors" },
     { file = "src/store/apply/tests/repair.rs", symbol = "a_map_of_repairs_applies_where_its_op_runs" },
     { file = "src/store/apply/tests/repair.rs", symbol = "a_repair_is_judged_on_the_anchor_it_brings_alone" },
-    { file = "src/store/apply/tests/repair.rs", symbol = "a_repair_of_the_map_a_pattern_gives_up_on_is_left_and_the_batch_written" },
+    { file = "src/store/apply/tests/repair.rs", symbol = "a_repair_of_the_map_a_pattern_gives_up_on_is_left_and_a_later_op_written" },
     { file = "src/store/apply/tests/repair.rs", symbol = "each_fault_of_a_repair_is_refused_naming_it" },
+    { file = "src/store/apply/tests/repair.rs", symbol = "two_repairs_of_the_map_to_one_refused_anchor_are_left_together" },
+]
+
+[accepted_text]
+choice = "repair_anchors takes listed repairs, all or none, or a map from stale anchor to repair, of which the store leaves a repair the bar refuses or cannot judge; the store reads no code"
+reason = "The store imports no code index and runs no project git, so which anchor repairs which is the caller's. A listed repair is held to what every op is held to: the decision exists, it holds from, from and to are anchors by the anchor rules, and to differs from from, each refusal naming repairs[j] and the part at fault; an empty list is no_repair. A map is applied where the op runs to every decision ever accepted that holds a key, so a planned anchor is never moved, and a key no decision holds is passed over. A repair to an anchor the decision holds already drops the stale one rather than refusing. A repair never grows a decision's list, so the limits on the whole list are not judged. Each anchor a repair brings is held to the patterns alone, as the op runs, over the caches and the bytes of the batch. A listed repair the bar refuses refuses the batch, naming that decision as the op's node and the repair that brought the anchor. A repair of the map the bar refuses, or a pattern cannot judge, is undone and left in Applied::left with its rule, and the others are written: the caller wrote none of them. A change of anchors leaves the status alone. Applied::repaired lists each anchor replaced."
+alternatives = [
+    "Refuse a repair to an anchor the decision holds already: rejected because every repair the tree shows would then fail on a decision that held both",
+    "Judge a repaired decision on its whole list: rejected because one decision already past anchors_max, or one holding an anchor a pattern refuses, would block every repair of the tree",
+    "Let the store compute the repairs: rejected because store imports only error, console and git for its own repository",
+    "Refuse the batch on a repair of the map the bar refuses: rejected because the caller wrote none of them, and an earlier op filling a cache would turn a repair into the batch's refusal",
 ]

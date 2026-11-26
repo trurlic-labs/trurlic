@@ -1,18 +1,18 @@
 component = "store"
 choice = "apply judges each op's [quality] patterns as it runs, on a bar compiled before the lock, charging bytes to MAX_WRITE_PATTERN_BYTES and cache growth to MAX_PATTERN_CACHE_TOTAL_BYTES"
-reason = "A write judges under the exclusive lock, which another reader or writer waits for at most 5 s, so what its patterns cost there is bounded. Compiling is done before: the handler compiles the bar with no lock held (Store::prepare_bar), and the writer compiles it again only when [quality] changed in between. On the lazy DFA alone what remains is the bytes the patterns read and the states their caches build. Writer::apply makes one Scan per batch: a cache per pattern, the bytes left and the cache left. The batch's origin is judged first; then each op holds what it writes to the text rules, the limits and the patterns as it runs (Bar::judge). Each pattern charges the bytes it would read, one more per text, before it reads any; past the bound the batch is refused as pattern_work at that op. After each pattern's search its caches' growth is charged to the total, so the growth may pass it by one pattern's two caches. Building states costs at most about 0.6 us a byte for a constructed pattern, so 1.5 MiB with that overshoot and 100 MB of reading keep the worst write near 1.4 s of CPU; a 32-pattern table of word lists, phrases and scripts grows under 1.1 MB over a full batch of English prose and a reason in fifteen scripts. A full cache is refused as pattern_gave_up, the total as pattern_cache_total naming the pattern that grew most; each says whether the op's texts alone did it, and the remedy follows: shorter text or a simpler pattern for one op, a split batch otherwise."
+reason = "A write judges under the exclusive lock, which another reader or writer waits for at most 5 s, so what its patterns cost there is bounded. Compiling is done before: the handler compiles the bar with no lock held (Store::prepare_bar), and the writer compiles it again only when [quality] changed in between. On the lazy DFA alone what remains is the bytes the patterns read and the states their caches build. Writer::apply makes one Scan per batch: a cache per pattern, the bytes left and the cache left. The batch's origin is judged first; then each op holds what it writes to the text rules, the limits and the patterns as it runs (Bar::judge). Each pattern charges the bytes it would read, one more per text, before it reads any; past the bound the batch is refused as pattern_work at that op. After each text a pattern searches its caches' growth is charged to the total, so the growth passes it by one search's at most, one pattern's two caches, and the refusal names that text. Building states costs at most about 0.6 us a byte for a constructed pattern, so 1.5 MiB with that overshoot and 100 MB of reading keep the worst write near 1.4 s of CPU; a 32-pattern table of word lists, phrases and scripts grows under 1.1 MB over a full batch of English prose and a reason in fifteen scripts. A full cache is refused as pattern_gave_up, the total as pattern_cache_total naming the pattern that grew most, each with one remedy: shorten the text, split the batch, or simplify the pattern. What a search read and built stays charged whatever its verdict, a repair the batch leaves included, so the bounds hold for the whole write."
 alternatives = [
     "Charge the whole batch before any pattern runs, then judge: rejected because it needs a second pass and a copy of each decision an op wrote, kept from the ops that follow",
     "Retry an op over fresh caches after a give-up: rejected because each retry pays another fill under the lock",
-    "Charge a pattern's work as bytes times its weighed NFA states: rejected because on the lazy DFA alone the cost per byte belongs to the engine, and the weights overstate an ordinary table",
     "One bound for the report and the write: rejected because a write holds the exclusive lock while it judges, and a bound that suits a report outlasts the lock timeout of every other caller",
     "Bound the building of states by each cache's cap alone, small enough for 32 of them: rejected because the cap would starve a word list over a full batch while bounding nothing a smaller table needs",
+    "Say whether the op's texts alone filled the caches, with a remedy for each case: rejected because two snapshots of every cache per op served the choice of one sentence",
 ]
 tags = [
     "performance",
     "quality",
 ]
-status = "accepted"
+status = "proposed"
 origin = "apply: a batch's pattern work is bounded"
 created = "2026-11-25T16:43:33.912873622Z"
 anchors = [
@@ -22,11 +22,23 @@ anchors = [
     { file = "src/store/limits.rs", symbol = "MAX_PATTERN_CACHE_TOTAL_BYTES" },
     { file = "src/store/limits.rs", symbol = "MAX_WRITE_PATTERN_BYTES" },
     { file = "src/store/quality/bar.rs", symbol = "Bar::judge_patterns" },
+    { file = "src/store/quality/bar.rs", symbol = "tests::the_total_is_refused_at_the_text_whose_search_passed_it" },
     { file = "src/store/quality/bar/audit.rs", symbol = "tests::a_write_grows_its_caches_by_their_total_and_no_more" },
     { file = "src/store/quality/bar/pattern.rs", symbol = "Scan" },
     { file = "src/store/quality/mod.rs", symbol = "Store::prepare_bar" },
 ]
 depends_on = [
     "apply-refuses-a-decision-below-the-quality-bar-naming-what-it-measured",
-    "the-lint-section-judges-the-patterns-by-name-within-a-work-limit-one-task-per-pattern",
+    "the-lint-section-judges-the-patterns-by-name-within-a-work-limit-over-one-scan",
+]
+
+[accepted_text]
+choice = "apply judges each op's [quality] patterns as it runs, on a bar compiled before the lock, charging bytes to MAX_WRITE_PATTERN_BYTES and cache growth to MAX_PATTERN_CACHE_TOTAL_BYTES"
+reason = "A write judges under the exclusive lock, which another reader or writer waits for at most 5 s, so what its patterns cost there is bounded. Compiling is done before: the handler compiles the bar with no lock held (Store::prepare_bar), and the writer compiles it again only when [quality] changed in between. On the lazy DFA alone what remains is the bytes the patterns read and the states their caches build. Writer::apply makes one Scan per batch: a cache per pattern, the bytes left and the cache left. The batch's origin is judged first; then each op holds what it writes to the text rules, the limits and the patterns as it runs (Bar::judge). Each pattern charges the bytes it would read, one more per text, before it reads any; past the bound the batch is refused as pattern_work at that op. After each pattern's search its caches' growth is charged to the total, so the growth may pass it by one pattern's two caches. Building states costs at most about 0.6 us a byte for a constructed pattern, so 1.5 MiB with that overshoot and 100 MB of reading keep the worst write near 1.4 s of CPU; a 32-pattern table of word lists, phrases and scripts grows under 1.1 MB over a full batch of English prose and a reason in fifteen scripts. A full cache is refused as pattern_gave_up, the total as pattern_cache_total naming the pattern that grew most; each says whether the op's texts alone did it, and the remedy follows: shorter text or a simpler pattern for one op, a split batch otherwise."
+alternatives = [
+    "Charge the whole batch before any pattern runs, then judge: rejected because it needs a second pass and a copy of each decision an op wrote, kept from the ops that follow",
+    "Retry an op over fresh caches after a give-up: rejected because each retry pays another fill under the lock",
+    "Charge a pattern's work as bytes times its weighed NFA states: rejected because on the lazy DFA alone the cost per byte belongs to the engine, and the weights overstate an ordinary table",
+    "One bound for the report and the write: rejected because a write holds the exclusive lock while it judges, and a bound that suits a report outlasts the lock timeout of every other caller",
+    "Bound the building of states by each cache's cap alone, small enough for 32 of them: rejected because the cap would starve a word list over a full batch while bounding nothing a smaller table needs",
 ]

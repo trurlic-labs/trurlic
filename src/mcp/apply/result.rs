@@ -446,13 +446,9 @@ mod tests {
                 max: usize::MAX,
             },
             Rule::PatternWork,
-            Rule::Quality(QualityFault::GaveUp {
-                index: usize::MAX,
-                alone: false,
-            }),
+            Rule::Quality(QualityFault::GaveUp { index: usize::MAX }),
             Rule::Quality(QualityFault::CacheTotal {
                 largest: usize::MAX,
-                alone: false,
             }),
         ];
         for rule in rules {

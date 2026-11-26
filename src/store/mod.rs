@@ -54,7 +54,7 @@ pub(crate) use migration::{
 };
 pub use name::NameFault;
 pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
-pub(crate) use quality::{Bar, PatternCache};
+pub(crate) use quality::Bar;
 pub use quality::{
     ConfigFault, DecisionField, Level, Limit, Pattern, PatternFault, PatternMatch, PreparedBar,
     Quality, QualityFault, Shortfall, WordRange,
