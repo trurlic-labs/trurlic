@@ -1,11 +1,10 @@
 component = "code"
-choice = "The code index's sub-modules depend one way: index/ names no other, parse/ and lexical/ name index/ alone, tree/ names index/ and parse/, and only the root (resolver.rs, mod.rs) names them all"
-reason = "One file held both the values every resolver builds (FileKind, Definition, FileIndex) and the dispatch that calls every resolver, so each module of the index depended on it and it on each of them. The values sit in index/, with the bounds an index is built within, the scope tree that charges all an index holds to its file's room, and the cache entry whose costs the scope tree charges: the encoding is below the scope tree and above the values, so it is inside index/. The resolvers stand on index/: parse/ reads a file with tree-sitter, lexical/ reads one without a grammar. The facts of a kind that name a resolver (its language row, its symbol syntax, its grammar's identity, its name in a cache key) are FileKind methods written beside the rows in parse/language/, so index/ names no grammar. resolver.rs is the one module that names every resolver, with the version and every bound of the rules. A C or C++ file is blanked there before the general resolver, as a Python file's line ends are rewritten there, so language/ never calls back into general/. tree/ is the second step over a tree's indexes and reads the language rows for test places. The test each_sub_module_names_no_module_above_it holds each sub-module to the modules its row allows, a path of supers read from the file's own module."
+choice = "The code index's sub-modules depend one way: index/ names no other, parse/ and lexical/ name index/ alone, facts/ names index/ and parse/, and only the root (dispatch.rs, mod.rs) names them all"
+reason = "A sub-module that names one above it closes a cycle with the edges down. The values an index holds could then not be built, read or tested without a resolver, nor a resolver without the facts over a tree, and no layer could change alone. index/ is what an index is, below every resolver; parse/ and lexical/ are the resolvers on it; facts/ is the step over a whole tree's indexes and reads parse/'s language rows for test places; dispatch.rs alone names every resolver. The test each_sub_module_names_no_module_above_it reads each path a sub-module's non-test code spells, a path of supers read from the file's own module, and refuses one that goes into no module its row lists. A module is no item of itself, so the dispatch function code::index is outside the sub-module index/. The check sees no method call or field access, so every impl stands in its type's sub-module: what a file of a kind is read as is a free function of parse/, never a FileKind method written there."
 alternatives = [
     "Keep the values and the dispatch in one file: rejected because every resolver and every reader then depends on the module that depends on all of them, and no direction can be checked",
-    "Keep the encoding a sibling of index/: rejected because the scope tree charges what an entry costs and the entry encodes the values, so the two would import each other",
-    "Write the FileKind methods that name a language with the enum, matching on literals: rejected because a kind's name and symbol syntax would then be held twice, in the method and in its row",
-    "Let the C-family module call the general resolver itself: rejected because language/ and general/ would then import each other",
+    "Write what a kind is read as as FileKind methods beside the language rows: rejected because a method call names no path, so an edge from index/ or facts/ to parse/ would pass the check unseen",
+    "Hold the direction by review alone: rejected because nothing then refuses an edge a change adds, and a cycle is found only once both ends depend on it",
 ]
 tags = [
     "architecture",
@@ -14,10 +13,9 @@ status = "proposed"
 origin = "module structure"
 created = "2026-11-26T14:45:30.766338253Z"
 anchors = [
-    { file = "src/code/dispatch.rs", symbol = "blanked" },
     { file = "src/code/dispatch.rs", symbol = "index" },
-    { file = "src/code/index/mod.rs" },
     { file = "src/code/mod.rs", symbol = "each_sub_module_names_no_module_above_it" },
-    { file = "src/code/parse/language/kind.rs", symbol = "syntax_of" },
+    { file = "src/code/parse/language/kind.rs" },
+    { file = "src/purity.rs", symbol = "goes_into" },
     { file = "src/purity.rs", symbol = "path_fault" },
 ]
