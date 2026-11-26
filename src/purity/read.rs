@@ -102,6 +102,15 @@ impl Crate {
             is_within(&own, module).then_some((path.as_str(), file))
         })
     }
+
+    /// The modules of the crate root that hold non-test code, by name.
+    pub(crate) fn root_modules(&self) -> BTreeSet<&str> {
+        self.files
+            .values()
+            .filter_map(|file| file.modules.first()?.first())
+            .map(String::as_str)
+            .collect()
+    }
 }
 
 /// The text of the token at `at` of `tokens`; empty past their end.

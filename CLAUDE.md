@@ -35,7 +35,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 failpoint  → console                     the named sites a test aborts, pauses, fails or panics at
                                          (`failpoints` feature): store, `apply`, the MCP server
 purity     → code (tests only)           what a module's non-test code may name: `code`'s and `lint`'s
-                                         allow lists, what `tools` and `mcp` may name, `store`'s parts and root
+                                         allow lists, `store`'s parts, the arrows of `tools`, `mcp` and the rest (`lib.rs`)
 ```
 
 `error` is used by every module but `code`, `lint`, `budget` and `failpoint`; `console` by `store`, `tools`, `mcp`, `commands`, `cli`, `sources` and `failpoint`.
@@ -85,7 +85,7 @@ purity     → code (tests only)           what a module's non-test code may nam
 9. A load fails only on an unreadable file; everything else is a validation issue (`check` fails, reads still answer).
 10. Every tool result fits 24 KiB (`budget::MAX_TOOL_RESULT_BYTES`) as valid JSON; cuts are named in `truncated`. Every refusal is an `isError` result `{"error": {"kind", ...}}`; JSON-RPC errors only for malformed messages, unknown methods/tools, panics.
 11. A panic in a request is answered `-32603` and the server keeps serving (`panic = "unwind"`, one `catch_unwind` in `mcp::Server::answer`).
-12. `code` is pure: its non-test code names only what an allow list holds (`purity/`, `code::tests`). Its cache (`.state/symbols/`) is never authoritative; a bad entry is a miss.
+12. Every module's non-test code names only what its arrow of the module map reaches, `code` and `lint` only what their allow lists hold (`purity/`, read by the tests of `lib.rs` and of each module's root). `code`'s cache (`.state/symbols/`) is never authoritative; a bad entry is a miss.
 13. A change to what an index holds raises `code::INDEX_FORMAT` (the fingerprint test says when).
 14. The store asks git nothing about the project's repository; `commands` gathers those facts and passes them as data.
 15. Every dependency justified; no runtime proc macros.

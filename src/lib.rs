@@ -60,3 +60,80 @@ pub mod bench {
             .total
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    use crate::purity::Crate;
+
+    /// The modules a test in their own root holds to a stricter list:
+    /// `code` and `lint` to their allow lists, the parts of `store` to
+    /// their order, `tools` and `mcp` to their arrows.
+    const HELD: [&str; 5] = ["code", "lint", "store", "tools", "mcp"];
+
+    /// Each other module of the module map in `CLAUDE.md`, and what its
+    /// non-test code may name in the crate besides itself: the modules its
+    /// arrow reaches, of `mcp` only `run_server` for `commands`, and `Error`,
+    /// `Result`, `console` and `failpoint` where the map says it uses them.
+    const MAP: [(&str, &[&str]); 9] = [
+        (
+            "commands",
+            &[
+                "store",
+                "tools",
+                "mcp::run_server",
+                "sources",
+                "lint",
+                "git",
+                "discovery",
+                "budget",
+                "Error",
+                "Result",
+                "console",
+            ],
+        ),
+        ("cli", &["commands", "store", "Error", "Result", "console"]),
+        ("discovery", &["store", "git", "Error", "Result"]),
+        (
+            "sources",
+            &["code", "lint", "store", "git", "Error", "Result", "console"],
+        ),
+        ("git", &["Error", "Result"]),
+        ("budget", &[]),
+        ("error", &["store"]),
+        ("console", &["Error", "Result"]),
+        ("failpoint", &["console"]),
+    ];
+
+    /// A module added to the crate fails here until a test of its own or a
+    /// row of [`MAP`] holds it.
+    #[test]
+    fn every_module_is_held_by_a_test_of_its_own_or_a_row_of_the_map() {
+        let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
+        let rows = MAP.iter().map(|(module, _)| *module);
+
+        let held: BTreeSet<&str> = HELD.into_iter().chain(rows).collect();
+
+        assert_eq!(source.root_modules(), held);
+    }
+
+    /// Every path the non-test code of a module of [`MAP`] names into the
+    /// crate goes into its row, however it is spelled (`crate::purity`
+    /// states what the check cannot see). So an item of a module past its
+    /// arrow is refused where such a module re-exports it.
+    #[test]
+    fn each_module_of_the_map_names_only_what_its_arrow_reaches() {
+        let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
+        for (module, named) in MAP {
+            let within: Vec<&str> = std::iter::once(module)
+                .chain(named.iter().copied())
+                .collect();
+
+            let found = source.places_beyond(module, &within);
+
+            assert_eq!(found, Vec::<String>::new(), "{module}");
+        }
+    }
+}

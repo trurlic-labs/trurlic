@@ -1,0 +1,18 @@
+component = "project"
+choice = "Every module's non-test code names in the crate only itself and what its arrow of the module map in CLAUDE.md reaches, held by a test in lib.rs or in the module's own root"
+reason = "The module map in CLAUDE.md draws which module may name which, and a new arrow is a decision first. An arrow that prose alone holds breaks unseen: a module names one past its arrow, or re-exports an item of one, and every module that names it then reaches past the map through the re-export. So each module is held by a test that reads the crate with crate::purity, which resolves every path the module's non-test code names, a use list, a chain of supers and an attribute's string included. A module with a stricter rule of its own keeps its own test: code and lint their allow lists, store the order of its parts, tools and mcp their arrows. Every other module is a row of the table MAP in the tests of lib.rs: the modules its arrow reaches, of mcp only run_server for commands, and Error, Result, console and failpoint where the map says the module uses them. A second test fails when the crate gains a module that neither a row nor a test of its own holds, so a new module is placed on the map before it lands. Where a row and the map disagree, the change fixes the map or removes the stray edge."
+alternatives = [
+    "Hold the map in CLAUDE.md alone: rejected, a re-export or a path spelled through super passes review unseen, and the gap stays until someone reads every file",
+    "One table for every module, the five with a test of their own included: rejected, a module's rule would then be stated twice, and the two statements could drift apart",
+    "A test per module in its own root: rejected for the modules with no rule of their own, nine copies of one loop and no check that a new module has one",
+    "Hold the edges with a text search for crate:: paths: rejected, it misses a use list, a chain of supers and a root re-export, which the purity reader resolves",
+]
+status = "proposed"
+origin = "module structure"
+created = "2026-11-26T19:11:33.054361381Z"
+anchors = [
+    { file = "src/lib.rs", symbol = "tests::each_module_of_the_map_names_only_what_its_arrow_reaches" },
+    { file = "src/lib.rs", symbol = "tests::every_module_is_held_by_a_test_of_its_own_or_a_row_of_the_map" },
+    { file = "src/purity/layer.rs", symbol = "Crate::places_beyond" },
+    { file = "src/purity/read.rs", symbol = "Crate::root_modules" },
+]
