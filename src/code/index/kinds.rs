@@ -63,7 +63,7 @@ pub(crate) enum DefinitionKind {
 
 impl DefinitionKind {
     /// Whether it is a function or a method, what a `()` suffix names.
-    pub(crate) const fn is_function(self) -> bool {
+    pub(super) const fn is_function(self) -> bool {
         match self {
             Self::Function | Self::Method => true,
             Self::Module

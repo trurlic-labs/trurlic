@@ -41,7 +41,7 @@ impl<'t> TreeIndex<'t> {
     }
 
     /// The span of bytes `range`.
-    pub(super) fn span(&self, range: &Range<usize>) -> Span {
+    fn span(&self, range: &Range<usize>) -> Span {
         self.lines.span(range.start, range.end)
     }
 

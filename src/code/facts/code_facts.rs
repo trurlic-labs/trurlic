@@ -286,14 +286,14 @@ impl CodeFacts {
 
     /// Whether `anchor`'s file defines its symbol as the whole path of a
     /// definition, no outer segment left out.
-    pub(crate) fn defines_whole(&self, anchor: &Anchor) -> bool {
+    fn defines_whole(&self, anchor: &Anchor) -> bool {
         !self.whole(anchor).is_empty()
     }
 
     /// The kind and the role of each definition of `anchor`'s file whose
     /// whole path its symbol is: test code when the definition is or its
     /// file is, as far as these facts tell. Empty when there is none.
-    pub(crate) fn whole(&self, anchor: &Anchor) -> BTreeSet<(DefinitionKind, Role)> {
+    fn whole(&self, anchor: &Anchor) -> BTreeSet<(DefinitionKind, Role)> {
         let Some((kind, index)) = self.entries.get(anchor.file()).and_then(indexed) else {
             return BTreeSet::new();
         };

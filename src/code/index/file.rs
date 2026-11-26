@@ -130,11 +130,11 @@ impl FileKind {
 pub(crate) struct Definition {
     pub(crate) scope: ScopeId,
     pub(crate) kind: DefinitionKind,
-    pub(crate) span: Span,
-    pub(crate) hash: SpanHash,
+    pub(in crate::code) span: Span,
+    pub(in crate::code) hash: SpanHash,
     /// Test code by what its file says of it; the tree may make a whole
     /// file test code besides (`CodeFacts::definitions`).
-    pub(crate) role: Role,
+    pub(in crate::code) role: Role,
     /// `None` where the source states none: a trait impl and its members,
     /// whose visibility is the trait's, and every lexical definition.
     pub(crate) visibility: Option<Visibility>,
@@ -145,9 +145,9 @@ pub(crate) struct Definition {
 /// `#[path = ".."]` names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ModuleFile {
-    pub(crate) scope: ScopeId,
-    pub(crate) role: Role,
-    pub(crate) path: Option<String>,
+    pub(in crate::code) scope: ScopeId,
+    pub(in crate::code) role: Role,
+    pub(in crate::code) path: Option<String>,
 }
 
 /// What a file of a kind with a resolver defines.
@@ -157,16 +157,16 @@ pub(crate) struct FileIndex {
     /// Sorted by span, then scope.
     pub(crate) definitions: Vec<Definition>,
     /// Empty for every kind but Rust.
-    pub(crate) rust: RustFacts,
+    pub(in crate::code) rust: RustFacts,
 }
 
 /// What a Rust file holds besides its definitions: the modules declared
 /// to be in files of their own, which the second step over its crate
 /// follows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct RustFacts {
+pub(in crate::code) struct RustFacts {
     /// In the order of the file.
-    pub(crate) module_files: Vec<ModuleFile>,
+    pub(in crate::code) module_files: Vec<ModuleFile>,
 }
 
 /// Why a file's bytes give no index.

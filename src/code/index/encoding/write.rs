@@ -47,20 +47,23 @@ pub(crate) fn encode(indexed: &Indexed) -> Vec<u8> {
 pub(in crate::code) struct Measure;
 
 impl Measure {
-    pub(in crate::code) fn scope(parent: Option<ScopeId>, name: &[Segment]) -> usize {
+    pub(in crate::code::index) fn scope(parent: Option<ScopeId>, name: &[Segment]) -> usize {
         Self::of(size_of::<Scope>() + DEPTH_BYTES, |out| {
             out.scope_entry(parent, name);
         })
     }
 
     /// `definition`, which comes after one of span `previous` in the entry.
-    pub(in crate::code) fn definition(definition: &Definition, previous: Option<Span>) -> usize {
+    pub(in crate::code::index) fn definition(
+        definition: &Definition,
+        previous: Option<Span>,
+    ) -> usize {
         Self::of(size_of::<Definition>(), |out| {
             out.definition(definition, previous);
         })
     }
 
-    pub(in crate::code) fn module_file(module: &ModuleFile) -> usize {
+    pub(in crate::code::index) fn module_file(module: &ModuleFile) -> usize {
         Self::of(size_of::<ModuleFile>(), |out| out.module_file(module))
     }
 

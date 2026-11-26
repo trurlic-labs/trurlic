@@ -33,10 +33,10 @@ pub(in crate::code) const CLOSE_MARK: [u8; 8] = (u64::MAX - 2).to_le_bytes();
 /// `first_line..=last_line`, counted from 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Span {
-    pub(crate) start: usize,
-    pub(crate) end: usize,
+    pub(in crate::code) start: usize,
+    pub(in crate::code) end: usize,
     pub(crate) first_line: usize,
-    pub(crate) last_line: usize,
+    pub(in crate::code) last_line: usize,
 }
 
 impl fmt::Display for Span {
@@ -113,11 +113,11 @@ impl SpanHash {
     }
 
     /// The hash its 32 bytes are.
-    pub(crate) const fn from_bytes(bytes: [u8; 32]) -> Self {
+    pub(in crate::code) const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    pub(crate) const fn as_bytes(&self) -> &[u8; 32] {
+    pub(in crate::code) const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 

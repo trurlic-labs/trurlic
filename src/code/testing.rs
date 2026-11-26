@@ -18,7 +18,7 @@ pub(crate) fn index(kind: FileKind, bytes: &[u8]) -> Indexed {
 
 /// The index of `bytes`, the file at `path` of `kind`, in a tree whose
 /// headers' sets are `tree`.
-pub(crate) fn index_in(path: &str, kind: FileKind, bytes: &[u8], tree: &BlankMacros) -> Indexed {
+pub(super) fn index_in(path: &str, kind: FileKind, bytes: &[u8], tree: &BlankMacros) -> Indexed {
     let macros = match kind.blanks_macros() {
         true => tree.of_file(path, &lexed(bytes)),
         false => FileMacros::default(),
@@ -28,7 +28,7 @@ pub(crate) fn index_in(path: &str, kind: FileKind, bytes: &[u8], tree: &BlankMac
 
 /// Each definition of `text`, a file of `kind`, as its path joined by
 /// `::` and the text of its span, in the index's order.
-pub(crate) fn defined(kind: FileKind, text: &str) -> Vec<(String, &str)> {
+pub(super) fn defined(kind: FileKind, text: &str) -> Vec<(String, &str)> {
     let index = index(kind, text.as_bytes()).unwrap();
     let scopes = Scopes(&index.scopes);
     index
@@ -50,7 +50,7 @@ pub(crate) fn path(scopes: Scopes<'_>, scope: ScopeId) -> String {
 
 /// The text of each definition of `text`, a file of `kind`, that
 /// `symbol` names.
-pub(crate) fn named<'t>(kind: FileKind, text: &'t str, symbol: &str) -> Vec<&'t str> {
+pub(super) fn named<'t>(kind: FileKind, text: &'t str, symbol: &str) -> Vec<&'t str> {
     let symbol = Symbol::parse(symbol, syntax_of(kind)).unwrap();
     let index = index(kind, text.as_bytes()).unwrap();
     let scopes = Scopes(&index.scopes);
@@ -70,7 +70,7 @@ pub(in crate::code) fn python_rules(source: &str) -> Rules {
 /// A file whose blocks nest `depth` deep, each one space deeper, whose
 /// innermost line holds an f-string: the input that, past some 380
 /// widths, makes tree-sitter-python's scanner abort the process.
-pub(crate) fn nested_ifs(depth: usize) -> String {
+pub(super) fn nested_ifs(depth: usize) -> String {
     let mut text = String::new();
     for level in 0..depth {
         text.push_str(&format!("{}if x:\n", " ".repeat(level)));

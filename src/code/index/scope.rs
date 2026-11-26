@@ -20,13 +20,13 @@ pub(crate) const MAX_NESTING: usize = 64;
 pub(crate) struct ScopeId(u32);
 
 impl ScopeId {
-    pub(crate) const fn at(self) -> usize {
+    pub(in crate::code) const fn at(self) -> usize {
         self.0 as usize
     }
 
     /// The id of the scope at `at`; `None` past `u32`, which no file
     /// within the size a source may have reaches.
-    pub(crate) fn of(at: usize) -> Option<Self> {
+    pub(in crate::code) fn of(at: usize) -> Option<Self> {
         u32::try_from(at).ok().map(Self)
     }
 }
@@ -34,8 +34,8 @@ impl ScopeId {
 /// A scope: its own name segments, under its parent, `None` at the top.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Scope {
-    pub(crate) parent: Option<ScopeId>,
-    pub(crate) name: Vec<Segment>,
+    pub(in crate::code) parent: Option<ScopeId>,
+    pub(in crate::code) name: Vec<Segment>,
 }
 
 /// The scopes of a file, which a path is walked through.

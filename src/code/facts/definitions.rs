@@ -58,7 +58,7 @@ impl Definitions {
     }
 
     /// How many definitions, their shared spans counted once.
-    pub(crate) fn count(&self) -> usize {
+    fn count(&self) -> usize {
         self.more.len() + 1
     }
 

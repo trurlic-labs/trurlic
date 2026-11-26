@@ -40,7 +40,11 @@ impl Leaves {
     /// is hashed alike; one that starts within another and ends past it
     /// is hashed as if it ended where that one does. Each unit goes into
     /// one hash, so the work is linear in the units and the ranges.
-    pub(in crate::code) fn hash_each(&self, text: &str, ranges: &[Range<usize>]) -> Vec<SpanHash> {
+    pub(in crate::code::parse) fn hash_each(
+        &self,
+        text: &str,
+        ranges: &[Range<usize>],
+    ) -> Vec<SpanHash> {
         let mut order: Vec<(usize, &Range<usize>)> = ranges.iter().enumerate().collect();
         order.sort_by_key(|(at, range)| (range.start, std::cmp::Reverse(range.end), *at));
         let mut hashing = Hashing {

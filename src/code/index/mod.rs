@@ -27,7 +27,7 @@ pub(in crate::code) use scope_tree::ScopeTree;
 pub(in crate::code) use span::{CLOSE_MARK, Lines, NESTED_MARK, OPEN_MARK};
 pub(crate) use span::{HASH_SCHEME, Span, SpanHash};
 pub(in crate::code) use symbol::name_segments;
-pub(crate) use symbol::{Segment, Symbol, SymbolFault, Syntax};
+pub(super) use symbol::{Segment, Symbol, SymbolFault, Syntax};
 pub(in crate::code) use work::{
     LEXICAL_WORK_PER_BYTE, MIN_PARSE_OPERATIONS, MIN_WORK, PARSE_OPERATIONS_PER_BYTE,
     SCAN_WORK_PER_BYTE, SERVED_BYTES_PER_BYTE, Work,

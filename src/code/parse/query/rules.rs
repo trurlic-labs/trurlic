@@ -49,13 +49,13 @@ pub(in crate::code::parse) enum Container {
 /// How a definition pattern makes a definition of what it captures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::code::parse) struct Definer {
-    pub(in crate::code::parse) kind: DefinitionKind,
+    pub(super) kind: DefinitionKind,
     /// Its kind in a container of a kind, by the container's.
     pub(super) kind_in: Vec<(DefinitionKind, DefinitionKind)>,
     /// What its span holds is under it.
     pub(in crate::code::parse) container: bool,
     /// The containers it is kept in; `None` for every one.
-    pub(in crate::code::parse) within: Option<Vec<Container>>,
+    pub(super) within: Option<Vec<Container>>,
     /// The growth of its span, by its place in [`Rules::growths`].
     pub(in crate::code::parse) growth: Option<usize>,
     /// The wrapping of its span, by its place in [`Rules::wraps`].

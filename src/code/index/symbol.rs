@@ -41,7 +41,7 @@ pub(crate) enum Segment {
 
 impl Segment {
     /// A name segment, its whitespace normalized as a symbol's is.
-    pub(in crate::code) fn name(text: &str) -> Self {
+    pub(super) fn name(text: &str) -> Self {
         Self::Name(normalize_spaces(text))
     }
 
@@ -97,7 +97,7 @@ impl fmt::Display for Segment {
 
 /// How a kind of file spells its symbols.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Syntax {
+pub(in crate::code) enum Syntax {
     /// `::` outside angle brackets separates, `<Trait>` is a segment, and
     /// a last segment may end in `()`.
     Rust,
@@ -157,7 +157,7 @@ enum Call {
 /// A parsed symbol: its segments from the outermost, and what a `()`
 /// ending it narrows.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Symbol {
+pub(in crate::code) struct Symbol {
     segments: Vec<Segment>,
     call: Call,
 }
@@ -169,7 +169,7 @@ impl Symbol {
     /// anything is refused, as is `()` after a trait segment. A data or
     /// prose file takes parentheses as text, and [`Syntax::Strings`] every
     /// parenthesis but a last `()`, which it reads both ways.
-    pub(crate) fn parse(text: &str, syntax: Syntax) -> Result<Self, SymbolFault> {
+    pub(in crate::code) fn parse(text: &str, syntax: Syntax) -> Result<Self, SymbolFault> {
         let (named, call) = match syntax {
             Syntax::Plain => return Self::of_segments(text, syntax, Call::Any),
             Syntax::Strings => return Self::of_strings(text),
@@ -225,7 +225,7 @@ impl Symbol {
     }
 
     /// Its segments, from the outermost.
-    pub(crate) fn segments(&self) -> &[Segment] {
+    pub(in crate::code) fn segments(&self) -> &[Segment] {
         &self.segments
     }
 
@@ -235,7 +235,7 @@ impl Symbol {
     /// out skipped, its last segment never; after `()`, the definition is
     /// a function or method, or in [`Syntax::Strings`] its last segment
     /// is written with them.
-    pub(crate) fn names<'a>(
+    pub(in crate::code) fn names<'a>(
         &self,
         kind: DefinitionKind,
         from_end: impl Iterator<Item = &'a Segment> + Clone,
@@ -254,7 +254,7 @@ impl Symbol {
 
     /// Whether this symbol names a definition of `kind` whose path's
     /// segments, from its last, are `from_end`, no segment left out.
-    pub(crate) fn is_path_of<'a>(
+    pub(in crate::code) fn is_path_of<'a>(
         &self,
         kind: DefinitionKind,
         from_end: impl Iterator<Item = &'a Segment> + Clone,

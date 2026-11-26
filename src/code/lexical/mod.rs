@@ -40,11 +40,7 @@ impl<'t> Lexical<'t> {
 
     /// The scope of `name`, a key, a target or a heading as the file
     /// holds it, under `parent`.
-    pub(super) fn scope(
-        &mut self,
-        parent: Option<ScopeId>,
-        name: &str,
-    ) -> Result<ScopeId, IndexFault> {
+    fn scope(&mut self, parent: Option<ScopeId>, name: &str) -> Result<ScopeId, IndexFault> {
         self.scopes.enter(parent, name_segments(name).collect())
     }
 
