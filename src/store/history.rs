@@ -36,8 +36,8 @@ use super::Store;
 use super::failpoint::{self, Site};
 use super::lock::StoreLock;
 use super::placement::listed;
-use super::schema::{COMPONENTS_DIR, DECISIONS_DIR, PROJECT_FILE, Placement, STATE_DIR};
-use super::text::{TextField, fault};
+use crate::store::model::{COMPONENTS_DIR, DECISIONS_DIR, PROJECT_FILE, Placement, STATE_DIR};
+use crate::store::model::{TextField, fault};
 
 /// The subject of the commit of graph files no tool wrote.
 const HAND_EDIT: &str = "hand edit";
@@ -95,7 +95,7 @@ impl TryFrom<MessageFields> for CommitMessage {
 
 impl CommitMessage {
     /// Fails when the origin or the session breaks the one-line rule of
-    /// `store::text`: a line break in either would forge a trailer.
+    /// `store::model::text`: a line break in either would forge a trailer.
     pub fn new(tool: Tool, origin: Option<String>, session: Option<String>) -> Result<Self> {
         for (field, value) in [(TextField::Origin, &origin), (TextField::Session, &session)] {
             if let Some(fault) = value.as_deref().and_then(|text| fault(field, text)) {

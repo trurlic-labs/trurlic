@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::store::schema::Anchor;
+use crate::store::model::Anchor;
 
 /// The ops of one `apply` call, applied in order, all or none, and the
 /// trailers of its history commit.

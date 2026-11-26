@@ -13,9 +13,9 @@
 
 use toml::Value;
 
-use super::super::super::schema::Anchor;
 use super::super::{Fact, File, RefText};
 use super::Notes;
+use crate::store::model::Anchor;
 
 /// The anchors of the `code_refs` of `file`, with what was rewritten, kept
 /// or dropped on the way noted.

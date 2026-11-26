@@ -6,11 +6,11 @@ use std::fmt;
 
 use super::ops::{Field, OpKind};
 use crate::store::limits::MAX_WRITE_PATTERN_BYTES;
-use crate::store::name::NameFault;
+use crate::store::model::AnchorFault;
+use crate::store::model::NameFault;
+use crate::store::model::NodeFile;
+use crate::store::model::{TextFault, TextField};
 use crate::store::quality::{Broken, QualityFault};
-use crate::store::schema::AnchorFault;
-use crate::store::state::NodeFile;
-use crate::store::text::{TextFault, TextField};
 use crate::store::validate::Issue;
 
 /// How many names a refusal lists before it counts the rest.

@@ -27,15 +27,16 @@ use serde::de::DeserializeOwned;
 use crate::console::diag;
 use crate::{Error, Result};
 
+use crate::store::model::{
+    COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, FORMAT_VERSION, FormatVersion,
+    PROJECT_FILE, Placement, Project,
+};
+
 use super::canonical::Canonical;
 use super::commit::PendingWrite;
 use super::history::{CommitMessage, History, Tool};
 use super::load::list_toml_stems;
-use super::schema::{
-    COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, FORMAT_VERSION, PROJECT_FILE, Placement,
-    Project,
-};
-use super::version::{FormatVersion, Standing, read_table, standing, version_key};
+use super::version::{Standing, read_table, standing, version_key};
 use super::{Store, StoreLock};
 
 pub use placement::PlacementDoubt;

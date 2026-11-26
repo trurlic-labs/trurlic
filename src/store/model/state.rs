@@ -28,7 +28,7 @@ pub struct ProjectState {
 impl ProjectState {
     /// The path under `.trurlic/` of every file of the graph,
     /// `project.toml` first, then the components and the decisions by name.
-    pub(super) fn files(&self) -> Vec<String> {
+    pub(in crate::store) fn files(&self) -> Vec<String> {
         let components = self.components.keys().map(|name| {
             NodePath {
                 dir: COMPONENTS_DIR,

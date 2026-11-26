@@ -3,8 +3,8 @@
 
 use std::fmt;
 
-use super::super::schema::Placement;
-use super::super::version::FormatVersion;
+use crate::store::model::FormatVersion;
+use crate::store::model::Placement;
 
 /// A value a migration dropped: `field` is its dotted key path in `file`,
 /// a path under `.trurlic/`, and `value` its TOML text.

@@ -22,8 +22,8 @@ use crate::Result;
 mod anchors;
 mod graph;
 
-use super::super::schema::Placement;
 use super::{Fact, File, Loss, PatternRecord, Tree, loss};
+use crate::store::model::Placement;
 
 use anchors::anchors;
 use graph::Graph;

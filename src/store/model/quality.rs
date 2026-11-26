@@ -2,16 +2,15 @@
 //! patterns, each optional, refused at load when no decision could meet
 //! one or a pattern is out of bounds. Patterns are held as text here and
 //! compiled only by a write, `check` and the `status` lint section
-//! (`bar.rs`): a load never runs them.
+//! (`store::quality`): a load never runs them.
 
 use std::collections::BTreeSet;
 use std::fmt;
 
 use serde::Deserialize;
 
-use super::DecisionField;
-use crate::store::limits::{MAX_PATTERN_BYTES, MAX_QUALITY_PATTERNS, MAX_WARN_MESSAGES_BYTES};
-use crate::store::text::{TextFault, TextField, fault};
+use super::limits::{MAX_PATTERN_BYTES, MAX_QUALITY_PATTERNS, MAX_WARN_MESSAGES_BYTES};
+use super::text::{TextFault, TextField, fault};
 
 /// The project's quality bar beyond the built-in rules. The default, an
 /// absent table, adds nothing to them.
@@ -74,6 +73,44 @@ impl Level {
         match self {
             Self::Refuse => "refuse",
             Self::Warn => "warn",
+        }
+    }
+}
+
+/// The fields of a decision the bar reads, and the names a pattern's
+/// `fields` gives them. `origin` is the batch's, read once per batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionField {
+    Alternatives,
+    Anchors,
+    Choice,
+    Origin,
+    Reason,
+    Tags,
+}
+
+impl DecisionField {
+    /// The fields of a decision file, in the order of its keys: the order
+    /// the bar reads them in.
+    pub const IN_FILE_ORDER: [Self; 6] = [
+        Self::Choice,
+        Self::Reason,
+        Self::Alternatives,
+        Self::Tags,
+        Self::Origin,
+        Self::Anchors,
+    ];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Alternatives => "alternatives",
+            Self::Anchors => "anchors",
+            Self::Choice => "choice",
+            Self::Origin => "origin",
+            Self::Reason => "reason",
+            Self::Tags => "tags",
         }
     }
 }

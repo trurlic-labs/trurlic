@@ -15,8 +15,8 @@ tags = [
 status = "accepted"
 created = "2026-06-15T09:45:46.975613404Z"
 anchors = [
-    { file = "src/store/schema.rs", symbol = "Component" },
-    { file = "src/store/schema.rs", symbol = "DECISIONS_DIR" },
-    { file = "src/store/schema.rs", symbol = "Decision" },
-    { file = "src/store/schema.rs", symbol = "Project" },
+    { file = "src/store/model/schema.rs", symbol = "Component" },
+    { file = "src/store/model/schema.rs", symbol = "DECISIONS_DIR" },
+    { file = "src/store/model/schema.rs", symbol = "Decision" },
+    { file = "src/store/model/schema.rs", symbol = "Project" },
 ]

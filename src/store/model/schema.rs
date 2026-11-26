@@ -337,7 +337,7 @@ pub enum AnchorFault {
     /// An empty or `.` segment: the path has a shorter spelling.
     Unnormalized,
     Backslash,
-    /// A character no text may hold (`store::text`), at its byte offset.
+    /// A character no text may hold (`store::model::text`), at its byte offset.
     PathCharacter {
         found: char,
         at: usize,

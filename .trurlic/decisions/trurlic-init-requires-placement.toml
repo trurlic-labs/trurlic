@@ -18,5 +18,5 @@ anchors = [
     { file = "src/cli.rs", symbol = "PlacementArg" },
     { file = "src/commands/init.rs", symbol = "init" },
     { file = "src/store/create.rs", symbol = "Store::create" },
-    { file = "src/store/schema.rs", symbol = "Placement" },
+    { file = "src/store/model/schema.rs", symbol = "Placement" },
 ]

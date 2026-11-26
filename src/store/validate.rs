@@ -9,10 +9,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use super::name::{NameFault, name_fault};
-use super::schema::{Decision, PROJECT_COMPONENT, Status};
-use super::state::{NodeFile, ProjectState};
-use super::text::{TextField, fault};
+use crate::store::model::{Decision, PROJECT_COMPONENT, Status};
+use crate::store::model::{NameFault, name_fault};
+use crate::store::model::{NodeFile, ProjectState};
+use crate::store::model::{TextField, fault};
 
 /// What an [`Issue`] reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -32,17 +32,17 @@ pub enum IssueKind {
     /// A node that connects to or depends on itself.
     SelfEdge,
     DependsOnCycle,
-    /// A choice that breaks a rule of `store::text`.
+    /// A choice that breaks a rule of `store::model::text`.
     InvalidChoice,
-    /// A reason that breaks a rule of `store::text`.
+    /// A reason that breaks a rule of `store::model::text`.
     InvalidReason,
-    /// An alternative that breaks a rule of `store::text`.
+    /// An alternative that breaks a rule of `store::model::text`.
     InvalidAlternative,
-    /// A tag that breaks a rule of `store::text`.
+    /// A tag that breaks a rule of `store::model::text`.
     InvalidTag,
-    /// A decision's `origin` that breaks a rule of `store::text`.
+    /// A decision's `origin` that breaks a rule of `store::model::text`.
     InvalidOrigin,
-    /// A component's description that breaks a rule of `store::text`.
+    /// A component's description that breaks a rule of `store::model::text`.
     InvalidDescription,
     /// `tracked`, and no work tree holds the graph or git tracks none of
     /// its files.
@@ -268,7 +268,7 @@ impl ProjectState {
     }
 
     /// Each `connects_to` names a component, and not its own, and the
-    /// description meets `store::text`.
+    /// description meets `store::model::text`.
     fn check_components(&self, issues: &mut Vec<Issue>) {
         for (name, component) in &self.components {
             if let Some(fault) = fault(TextField::Description, &component.description) {
@@ -286,7 +286,8 @@ impl ProjectState {
     }
 
     /// Each decision's component exists, each `depends_on` names a
-    /// decision, not its own, and every text it holds meets `store::text`.
+    /// decision, not its own, and every text it holds meets
+    /// `store::model::text`.
     fn check_decisions(&self, issues: &mut Vec<Issue>) {
         for (name, decision) in &self.decisions {
             let component = &decision.component;
@@ -347,7 +348,7 @@ fn check_edge(issues: &mut Vec<Issue>, from: &str, field: EdgeField, to: &str, e
     }
 }
 
-/// Every text of the decision `name` against the rules of `store::text`:
+/// Every text of the decision `name` against the rules of `store::model::text`:
 /// its choice, reason, alternatives, tags and origin, and the accepted
 /// text a proposed revision keeps.
 fn check_text(issues: &mut Vec<Issue>, name: &str, decision: &Decision) {
@@ -643,12 +644,12 @@ mod tests {
         );
     }
 
-    /// Every text a node file holds is held to `store::text`: each
+    /// Every text a node file holds is held to `store::model::text`: each
     /// alternative and tag, the origin, the accepted text a revision keeps
     /// and a component's description, each fault naming its key.
     #[test]
     fn every_text_of_a_node_file_is_checked_and_named_by_its_key() {
-        use crate::store::schema::{AcceptedText, Status};
+        use crate::store::model::{AcceptedText, Status};
 
         let mut state = empty_state();
         let mut decision = sample_decision("project");

@@ -18,9 +18,9 @@ use super::commit::PendingWrite;
 use super::failpoint::{self, Site};
 use super::history::{CommitMessage, History, Tool};
 use super::journal::{PendingHistory, Replayed};
-use super::schema::{Placement, Project};
-use super::state::NodeFile;
 use super::{ProjectState, Store, StoreLock};
+use crate::store::model::NodeFile;
+use crate::store::model::{Placement, Project};
 
 impl Store {
     /// The graph as the files on disk hold it, loaded under the shared lock,

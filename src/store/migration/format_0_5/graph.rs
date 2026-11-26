@@ -10,9 +10,9 @@ use toml::{Table, Value};
 use crate::{Error, Result};
 
 use super::super::super::cycles::cycles;
-use super::super::super::schema::{PROJECT_COMPONENT, Placement};
 use super::super::{Fact, File, PatternRecord};
 use super::{Notes, component, decision, pattern, project};
+use crate::store::model::{PROJECT_COMPONENT, Placement};
 
 /// The nodes of the 0.4.1 graph by kind, and the edges `graph.toml` gives
 /// them.

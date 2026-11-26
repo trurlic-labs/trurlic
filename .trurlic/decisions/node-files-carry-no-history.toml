@@ -13,6 +13,6 @@ tags = [
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
-    { file = "src/store/schema.rs", symbol = "AcceptedText" },
-    { file = "src/store/schema.rs", symbol = "Decision" },
+    { file = "src/store/model/schema.rs", symbol = "AcceptedText" },
+    { file = "src/store/model/schema.rs", symbol = "Decision" },
 ]

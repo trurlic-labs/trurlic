@@ -12,12 +12,13 @@
 
 use std::borrow::Cow;
 
-use super::{DecisionField, Limit, Quality, QualityFault, WordRange, words};
+use super::{Limit, QualityFault, words};
 use crate::store::limits::{
     MAX_PATTERN_CACHE_TOTAL_BYTES, MAX_QUOTED_MATCH_BYTES, MAX_WRITE_PATTERN_BYTES,
 };
-use crate::store::schema::Decision;
-use crate::store::text::{TextFault, TextField, fault};
+use crate::store::model::Decision;
+use crate::store::model::{DecisionField, Quality, WordRange};
+use crate::store::model::{TextFault, TextField, fault};
 
 mod audit;
 mod folding;
@@ -397,7 +398,7 @@ mod tests {
     use crate::store::limits::{
         MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_COMPILED_BYTES, MAX_PATTERN_FOLDED_CODE_POINTS,
     };
-    use crate::store::quality::{Level, Pattern};
+    use crate::store::model::{Level, Pattern};
     use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, sample_decision};
 
     fn quality(patterns: &[&str]) -> Quality {

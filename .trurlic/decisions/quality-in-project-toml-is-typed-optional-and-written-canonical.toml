@@ -14,11 +14,11 @@ origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
     { file = "src/store/canonical.rs", symbol = "Emitter::pattern" },
-    { file = "src/store/quality/config.rs", symbol = "ConfigFault" },
-    { file = "src/store/quality/config.rs", symbol = "Quality" },
-    { file = "src/store/quality/mod.rs", symbol = "DecisionField" },
+    { file = "src/store/model/quality.rs", symbol = "ConfigFault" },
+    { file = "src/store/model/quality.rs", symbol = "DecisionField" },
+    { file = "src/store/model/quality.rs", symbol = "Quality" },
+    { file = "src/store/model/schema.rs", symbol = "Project" },
     { file = "src/store/quality/mod.rs", symbol = "words" },
-    { file = "src/store/schema.rs", symbol = "Project" },
 ]
 depends_on = [
     "one-canonical-form-for-every-graph-file",

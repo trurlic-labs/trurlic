@@ -13,8 +13,8 @@ use super::canonical::{Canonical, canonical};
 use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
 use super::history::History;
-use super::limits::MAX_NODE_FILE_BYTES;
 use super::{Store, StoreLock, StorePathFault};
+use crate::store::limits::MAX_NODE_FILE_BYTES;
 
 /// A file write staged for batch commit.
 /// Created via [`Store::prepare_write`], executed via [`Store::commit_batch`].
@@ -132,7 +132,7 @@ impl Store {
 mod tests {
     use super::*;
     use crate::store::STATE_DIR;
-    use crate::store::schema::Component;
+    use crate::store::model::Component;
     use crate::store::testing::*;
     use tempfile::TempDir;
 

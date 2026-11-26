@@ -27,7 +27,8 @@ use super::{Breach, Broken, Hit, Place};
 use crate::store::limits::{
     MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_COMPILED_BYTES, MAX_PATTERN_FOLDED_CODE_POINTS,
 };
-use crate::store::quality::{DecisionField, Level, Pattern, PatternMatch, QualityFault};
+use crate::store::model::{DecisionField, Level, Pattern};
+use crate::store::quality::{PatternMatch, QualityFault};
 
 /// The refusal of a pattern that holds a Unicode word boundary, which the
 /// lazy DFA runs only over ASCII text, with the rewrites that run on it.

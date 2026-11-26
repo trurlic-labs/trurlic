@@ -9,9 +9,10 @@ use super::decision::Context;
 use super::edit::Edit;
 use super::ops::{AnchorInput, Field, ListEdit};
 use super::refusal::{NodeKind, Rule};
-use crate::store::name::name_fault;
-use crate::store::quality::{Breach, DecisionField, Place, element};
-use crate::store::schema::{Anchor, Decision};
+use crate::store::model::DecisionField;
+use crate::store::model::name_fault;
+use crate::store::model::{Anchor, Decision};
+use crate::store::quality::{Breach, Place, element};
 
 /// What an op breaks: the argument within it, `None` for the op as a
 /// whole, the rule, and the decision at fault when it is not the node the

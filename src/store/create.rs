@@ -7,9 +7,9 @@ use std::path::Path;
 
 use crate::{Error, Result};
 
-use super::quality::Quality;
-use super::schema::{Placement, Project};
 use super::{COMPONENTS_DIR, DECISIONS_DIR, FORMAT_VERSION, STORE_DIR, Store};
+use crate::store::model::Quality;
+use crate::store::model::{Placement, Project};
 
 impl Store {
     /// Create `.trurlic/` in `project_dir` for a project named `name`. Fails

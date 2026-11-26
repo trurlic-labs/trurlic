@@ -4,8 +4,8 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
-use super::schema::{Anchor, AnchorFault, Decision, PROJECT_COMPONENT};
-use super::state::ProjectState;
+use crate::store::model::ProjectState;
+use crate::store::model::{Anchor, AnchorFault, Decision, PROJECT_COMPONENT};
 
 /// A decision as a query answers it: its name and its file.
 pub type Named<'a> = (&'a str, &'a Decision);

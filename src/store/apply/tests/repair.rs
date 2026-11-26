@@ -11,8 +11,8 @@ use tempfile::TempDir;
 
 use super::{anchor, apply, files, graph, named, refused};
 use crate::store::apply::{Op, OpKind, Rename, Repair, RepairAnchors};
-use crate::store::schema::{Anchor, Status};
-use crate::store::state::NodeFile;
+use crate::store::model::NodeFile;
+use crate::store::model::{Anchor, Status};
 use crate::store::testing::{
     OUTGROWS_ITS_CACHE, changed_in, coin_flips, graph_log, sample_decision, shared_store,
     write_node,

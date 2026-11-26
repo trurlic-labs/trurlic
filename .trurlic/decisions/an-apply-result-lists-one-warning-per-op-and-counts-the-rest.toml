@@ -18,7 +18,7 @@ anchors = [
     { file = "src/store/apply/tests/quality.rs", symbol = "a_warn_pattern_warns_once_per_op_at_its_first_match" },
     { file = "src/store/apply/warning.rs", symbol = "Warning" },
     { file = "src/store/apply/warning.rs", symbol = "report" },
-    { file = "src/store/limits.rs", symbol = "MAX_WARNINGS_PER_OP" },
+    { file = "src/store/model/limits.rs", symbol = "MAX_WARNINGS_PER_OP" },
     { file = "src/tools/apply/result.rs" },
     { file = "src/tools/apply/result.rs", symbol = "the_longest_result_of_a_full_batch_fits_the_budget" },
 ]

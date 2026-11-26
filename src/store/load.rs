@@ -24,9 +24,9 @@ use crate::{Error, Result};
 
 use super::Store;
 use super::canonical::{Canonical, is_canonical};
-use super::limits::MAX_NODE_FILE_BYTES;
-use super::schema::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, Project};
-use super::state::{NodeFile, ProjectState};
+use crate::store::limits::MAX_NODE_FILE_BYTES;
+use crate::store::model::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, Project};
+use crate::store::model::{NodeFile, ProjectState};
 
 /// One byte past the cap, so a read that fills it proves the file too large.
 const READ_LIMIT: u64 = MAX_NODE_FILE_BYTES as u64 + 1;

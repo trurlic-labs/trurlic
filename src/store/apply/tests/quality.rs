@@ -12,8 +12,8 @@ use crate::Error;
 use crate::store::apply::{Applied, Merge, Op, Record};
 use crate::store::canonical::canonical;
 use crate::store::limits::{MAX_QUALITY_PATTERNS, MAX_WRITE_PATTERN_BYTES};
-use crate::store::schema::Anchor;
-use crate::store::state::NodeFile;
+use crate::store::model::Anchor;
+use crate::store::model::NodeFile;
 use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, sample_decision, write_node};
 use crate::store::{ListEdit, PatternNote, QualityFault, Rule, Store, Warning, WarningKind};
 

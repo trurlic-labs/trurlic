@@ -7,8 +7,9 @@
 use std::borrow::Cow;
 
 use super::{Bar, Breach, Broken, PatternFault, Place, Scan, searched, texts};
-use crate::store::quality::{DecisionField, Level, Quality, QualityFault};
-use crate::store::schema::Decision;
+use crate::store::model::Decision;
+use crate::store::model::{DecisionField, Level, Quality};
+use crate::store::quality::QualityFault;
 
 /// A rule of the bar a stored decision breaks, and where: what a report
 /// shows of a graph below its own bar.
@@ -139,8 +140,9 @@ mod tests {
     use super::*;
     use crate::store::corpus::Corpus;
     use crate::store::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES};
+    use crate::store::model::Pattern;
+    use crate::store::quality::Hit;
     use crate::store::quality::Scan;
-    use crate::store::quality::{Hit, Pattern};
     use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, sample_decision};
     use crate::store::{ProjectState, WordRange};
 

@@ -7,7 +7,7 @@
 /// file over it (`Store::prepare_write`), and one record at every limit
 /// below stays under it, its text and the accepted text a revision keeps
 /// beside it included (the test below).
-pub(super) const MAX_NODE_FILE_BYTES: usize = 1024 * 1024;
+pub(in crate::store) const MAX_NODE_FILE_BYTES: usize = 1024 * 1024;
 
 /// Maximum byte length for a decision's `reason` and a component's
 /// `description`.
@@ -23,7 +23,7 @@ pub(crate) const MAX_TAG_BYTES: usize = 128;
 
 /// Minimum byte length for a decision's `reason` field.
 /// Forces actual reasoning instead of rubber-stamp approvals.
-pub(super) const MIN_REASON_BYTES: usize = 10;
+pub(in crate::store) const MIN_REASON_BYTES: usize = 10;
 
 /// Maximum byte length for a decision's `choice` field.
 /// A choice is a concise title, not a paragraph.
@@ -56,12 +56,12 @@ pub(crate) const MAX_LIST_ITEMS: usize = 100;
 pub(crate) const MAX_QUALITY_PATTERNS: usize = 32;
 
 /// Maximum byte length of one `[quality]` pattern's text.
-pub(super) const MAX_PATTERN_BYTES: usize = 500;
+pub(in crate::store) const MAX_PATTERN_BYTES: usize = 500;
 
 /// Maximum bytes the Thompson NFA of one pattern, forward or reverse, may
 /// take to compile; a pattern past it is refused. A short text can still
 /// ask for a large automaton: `\w{100}` over Unicode passes it.
-pub(super) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
+pub(in crate::store) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
 
 /// Code points the case-insensitive classes of one pattern may span:
 /// translating a pattern folds each class it reads under the flag code
@@ -72,7 +72,7 @@ pub(super) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
 /// under the flag, `(?i)[\s\S]` (1,114,112), and nearly as much again
 /// beside it, and refuses what nested brackets fold many times over. A
 /// table of 32 patterns at the bound compiles in about 0.15 s on one core.
-pub(super) const MAX_PATTERN_FOLDED_CODE_POINTS: u64 = 1 << 21;
+pub(in crate::store) const MAX_PATTERN_FOLDED_CODE_POINTS: u64 = 1 << 21;
 
 /// Bytes of cache the lazy DFA of one pattern may hold in each direction
 /// over one call. A pattern whose automaton cannot start within it is
@@ -81,7 +81,7 @@ pub(super) const MAX_PATTERN_FOLDED_CODE_POINTS: u64 = 1 << 21;
 /// of 48 words under `(?i)`, grows its caches by about 224 KB over the 213
 /// decisions of English prose in `tests/fixtures/prose`, and by about 20 KB
 /// more each time the text doubles.
-pub(super) const MAX_PATTERN_CACHE_BYTES: usize = 320 * 1024;
+pub(in crate::store) const MAX_PATTERN_CACHE_BYTES: usize = 320 * 1024;
 
 /// Bytes the caches of all the `[quality]` patterns, both directions, may
 /// grow by over one call: one `apply` batch, or one page of the `status`
@@ -149,7 +149,7 @@ pub(crate) const MAX_WARN_MESSAGES_BYTES: usize = 1_536;
 mod tests {
     use super::*;
     use crate::store::canonical::canonical;
-    use crate::store::schema::{AcceptedText, Anchor, Status};
+    use crate::store::model::{AcceptedText, Anchor, Status};
     use crate::store::testing::sample_decision;
 
     /// One record at every limit of the `apply` spec, each text full of

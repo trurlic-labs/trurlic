@@ -17,8 +17,8 @@ origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
     { file = "src/commands/check.rs", symbol = "check" },
-    { file = "src/store/limits.rs", symbol = "MAX_PATTERN_COMPILED_BYTES" },
-    { file = "src/store/limits.rs", symbol = "MAX_PATTERN_FOLDED_CODE_POINTS" },
+    { file = "src/store/model/limits.rs", symbol = "MAX_PATTERN_COMPILED_BYTES" },
+    { file = "src/store/model/limits.rs", symbol = "MAX_PATTERN_FOLDED_CODE_POINTS" },
     { file = "src/store/quality/bar.rs", symbol = "Bar::compile" },
     { file = "src/store/quality/bar.rs", symbol = "Bar::limits_only" },
     { file = "src/store/quality/bar/audit.rs", symbol = "Bar::for_report" },

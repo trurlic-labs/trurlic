@@ -20,9 +20,10 @@ use super::edit::Edit;
 use super::ops::{AnchorInput, Field, OpKind, Repair, RepairAnchors};
 use super::refusal::{NodeKind, Rule};
 use super::{Done, LeftRepair, Repaired};
-use crate::store::quality::{Bar, Breach, DecisionField, Hit, Place, Scan, texts};
-use crate::store::schema::{Anchor, Decision};
-use crate::store::state::ProjectState;
+use crate::store::model::DecisionField;
+use crate::store::model::ProjectState;
+use crate::store::model::{Anchor, Decision};
+use crate::store::quality::{Bar, Breach, Hit, Place, Scan, texts};
 
 /// One anchor replaced, and whether its decision gained the new anchor,
 /// which it did not hold before.

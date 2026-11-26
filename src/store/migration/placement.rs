@@ -9,8 +9,8 @@ use crate::{Error, Result};
 
 use super::super::Store;
 use super::super::placement::{listed, partition};
-use super::super::schema::Placement;
 use super::{File, PlacementBasis};
+use crate::store::model::Placement;
 
 /// How the step to format 0.5 is told the placement it writes.
 #[derive(Debug)]

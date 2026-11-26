@@ -2,7 +2,7 @@
 //! project's `[quality]` table.
 //!
 //! Two kinds of rule govern a decision's text and shape. What a file must
-//! hold to be read as written (`store::text`: a non-blank choice on one
+//! hold to be read as written (`store::model::text`: a non-blank choice on one
 //! line within 200 bytes, a reason of real text, no invisible, reordering
 //! or control character, no tool-call markup) is a property of every graph:
 //! validation reports each, so `check` fails on a hand edit that breaks
@@ -17,57 +17,16 @@
 //! between Unicode whitespace ([`words`]). Bytes are bytes of UTF-8.
 
 mod bar;
-mod config;
 
 use std::fmt;
 
-use serde::Deserialize;
-
 use crate::store::Store;
 use crate::store::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES};
+use crate::store::model::Quality;
 use crate::{Error, Result};
 
 pub use bar::Shortfall;
 pub(crate) use bar::{Bar, Breach, Broken, Hit, Place, Scan, element, texts};
-pub use config::{Level, Pattern, Quality, WordRange};
-
-/// The fields of a decision the bar reads, and the names a pattern's
-/// `fields` gives them. `origin` is the batch's, read once per batch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DecisionField {
-    Alternatives,
-    Anchors,
-    Choice,
-    Origin,
-    Reason,
-    Tags,
-}
-
-impl DecisionField {
-    /// The fields of a decision file, in the order of its keys: the order
-    /// the bar reads them in.
-    pub const IN_FILE_ORDER: [Self; 6] = [
-        Self::Choice,
-        Self::Reason,
-        Self::Alternatives,
-        Self::Tags,
-        Self::Origin,
-        Self::Anchors,
-    ];
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Alternatives => "alternatives",
-            Self::Anchors => "anchors",
-            Self::Choice => "choice",
-            Self::Origin => "origin",
-            Self::Reason => "reason",
-            Self::Tags => "tags",
-        }
-    }
-}
 
 /// A count the bar bounds: built in, or a key of `[quality]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,7 +261,7 @@ mod tests {
 
     use super::*;
     use crate::store::canonical::{canonical, is_canonical};
-    use crate::store::schema::{Anchor, Decision};
+    use crate::store::model::{Anchor, Decision, DecisionField};
     use crate::store::testing::{sample_decision, setup_store};
 
     /// The example config the repository ships.

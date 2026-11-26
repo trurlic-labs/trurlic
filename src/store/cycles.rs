@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, btree_set};
 
-use super::state::ProjectState;
+use crate::store::model::ProjectState;
 
 impl ProjectState {
     /// Every `depends_on` cycle as its sorted members, the cycles sorted.

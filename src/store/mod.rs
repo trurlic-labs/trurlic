@@ -15,22 +15,17 @@ mod durable;
 pub(crate) mod failpoint;
 mod history;
 mod journal;
-pub(crate) mod limits;
 mod load;
 mod lock;
 mod migration;
-mod name;
+mod model;
 mod placement;
 mod quality;
 mod query;
 mod recovery;
-mod schema;
 #[cfg(any(test, feature = "bench"))]
 pub(crate) mod seeded;
-mod state;
 mod symbols;
-mod text;
-mod time;
 mod validate;
 mod version;
 
@@ -52,29 +47,26 @@ pub use migration::PlacementDoubt;
 pub(crate) use migration::{
     Fact, Loss, MigrationReport, PatternRecord, PlacementBasis, PlacementSource,
 };
+pub(crate) use model::limits;
+pub use model::{
+    Anchor, AnchorFault, COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, FORMAT_VERSION,
+    FormatVersion, Level, NodeFile, PROJECT_COMPONENT, PROJECT_FILE, Placement, ProjectState,
+    Quality, STATE_DIR, STORE_DIR, Status, StatusName, TextFault, TextField, Timestamp,
+    TimestampError,
+};
 pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
 pub(crate) use quality::Bar;
-pub use quality::{Level, PreparedBar, Quality, QualityFault, Shortfall};
+pub use quality::{PreparedBar, QualityFault, Shortfall};
 pub use query::{Named, anchors_in, normalize_path};
-pub use schema::{
-    Anchor, AnchorFault, COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, FORMAT_VERSION,
-    PROJECT_COMPONENT, PROJECT_FILE, Placement, STATE_DIR, STORE_DIR, Status, StatusName,
-};
-pub use state::{NodeFile, ProjectState};
 pub use symbols::SymbolsKey;
-pub use text::{TextFault, TextField};
-pub use time::{Timestamp, TimestampError};
 pub use validate::{Issue, IssueKind};
-pub use version::FormatVersion;
 
 #[cfg(test)]
 pub(crate) use apply::{NodeKind, OpAt, Rule};
 #[cfg(test)]
-pub(crate) use name::NameFault;
+pub(crate) use model::{AcceptedText, DecisionField, NameFault, Pattern, Project, WordRange};
 #[cfg(test)]
-pub(crate) use quality::{DecisionField, Pattern, PatternMatch, WordRange};
-#[cfg(test)]
-pub(crate) use schema::{AcceptedText, Project};
+pub(crate) use quality::PatternMatch;
 
 /// Handle to a graph directory and the code root it is read for. It holds
 /// no graph: a read loads one with [`Store::load_state`], and every write

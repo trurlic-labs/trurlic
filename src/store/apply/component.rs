@@ -9,8 +9,8 @@ use super::check::{Fault, edit_list, new_name};
 use super::edit::Edit;
 use super::ops::{AddComponent, Field, ListEdit, OpKind, RemoveComponent, Rename, ReviseComponent};
 use super::refusal::{NodeKind, Rule};
-use crate::store::schema::{Component, PROJECT_COMPONENT};
-use crate::store::text::{TextField, fault};
+use crate::store::model::{Component, PROJECT_COMPONENT};
+use crate::store::model::{TextField, fault};
 
 pub(super) fn add(edit: &mut Edit<'_>, op: AddComponent) -> Result<Done, Fault> {
     new_name(edit, &op.name, Field::Name)?;
@@ -115,7 +115,7 @@ pub(super) fn remove(edit: &mut Edit<'_>, op: RemoveComponent) -> Result<Done, F
     Ok(Done::of(OpKind::RemoveComponent, op.name))
 }
 
-/// A description meets `store::text`.
+/// A description meets `store::model::text`.
 fn description(text: &str) -> Result<(), Fault> {
     match fault(TextField::Description, text) {
         Some(fault) => Err(Fault::at(

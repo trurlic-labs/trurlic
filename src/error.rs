@@ -280,7 +280,7 @@ pub enum Error {
     GraphIndexLocked { lock: PathBuf },
 
     /// An `Origin:` or `Session:` for a history commit that breaks the
-    /// one-line rule of `store::text`.
+    /// one-line rule of `store::model::text`.
     #[error("`{field}` {fault}")]
     TrailerText { field: TextField, fault: TextFault },
 

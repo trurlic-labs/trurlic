@@ -38,7 +38,7 @@ impl fmt::Display for NameFault {
 /// The first rule a node's name breaks: kebab-case, at most
 /// [`MAX_NAME_BYTES`], not [`PROJECT_COMPONENT`].
 #[must_use]
-pub(super) fn name_fault(name: &str) -> Option<NameFault> {
+pub(in crate::store) fn name_fault(name: &str) -> Option<NameFault> {
     if !is_valid_kebab_case(name) {
         Some(NameFault::NotKebab)
     } else if name.len() > MAX_NAME_BYTES {

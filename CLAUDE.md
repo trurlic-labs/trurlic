@@ -39,14 +39,14 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 
 | Topic | Home |
 |---|---|
-| Node types, `FORMAT_VERSION` (0.5.0) | `store/schema.rs` |
-| Text rules / write-only quality bar | `store/text.rs` / `store/quality/` |
+| Node types, `FORMAT_VERSION` (0.5.0) | `store/model/schema.rs` |
+| Text rules / write-only quality bar | `store/model/text.rs` / `store/quality/` |
 | Canonical serializer (the only one) | `store/canonical.rs` |
 | The one write: ops, cascades, undo | `store/apply/` |
 | Commit, journal, recovery | `store/commit.rs`, `journal.rs`, `recovery.rs` |
 | Shared-graph history | `store/history.rs`, `git/graph/` |
 | Format check / migration registry | `store/version.rs` / `store/migration/` |
-| Size and count limits | `store/limits.rs` |
+| Size and count limits | `store/model/limits.rs` |
 | Tool specs (schema = parser) | `tools/spec/` |
 | Refusal JSON, result fitting | `tools/result.rs`, `tools/truncate.rs` |
 | Tool registry / its MCP listing and result envelope | `tools/registry.rs` / `mcp/listing.rs`, `mcp/envelope.rs` |
@@ -84,7 +84,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 13. A change to what an index holds raises `code::INDEX_FORMAT` (the fingerprint test says when).
 14. The store asks git nothing about the project's repository; `commands` gathers those facts and passes them as data.
 15. Every dependency justified; no runtime proc macros.
-16. A `[quality]` pattern compiles within `MAX_PATTERN_FOLDED_CODE_POINTS` and `MAX_PATTERN_COMPILED_BYTES`, before a write takes its lock, and runs on the lazy DFA alone, charging its bytes against `MAX_WRITE_PATTERN_BYTES` or `MAX_REPORT_PATTERN_BYTES` before it reads them, its cache giving up rather than outgrow `MAX_PATTERN_CACHE_BYTES`, and the caches of a call growing against `MAX_PATTERN_CACHE_TOTAL_BYTES` together (`store/limits.rs`). Past any of them a write is refused and a report reads no further.
+16. A `[quality]` pattern compiles within `MAX_PATTERN_FOLDED_CODE_POINTS` and `MAX_PATTERN_COMPILED_BYTES`, before a write takes its lock, and runs on the lazy DFA alone, charging its bytes against `MAX_WRITE_PATTERN_BYTES` or `MAX_REPORT_PATTERN_BYTES` before it reads them, its cache giving up rather than outgrow `MAX_PATTERN_CACHE_BYTES`, and the caches of a call growing against `MAX_PATTERN_CACHE_TOTAL_BYTES` together (`store/model/limits.rs`). Past any of them a write is refused and a report reads no further.
 17. `vendor/tree-sitter/` is upstream's crate but for `vendor/tree-sitter-0.27.2-bounds.patch`: a change to the runtime is a change to that patch, regenerated, and raises `code::INDEX_FORMAT`.
 
 ### Working with the graph

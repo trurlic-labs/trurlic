@@ -30,9 +30,11 @@ use crate::store::canonical::Canonical;
 use crate::store::commit::PendingWrite;
 use crate::store::history::{CommitMessage, Tool};
 
-use crate::store::quality::{Bar, DecisionField, Hit, PreparedBar, Scan};
-use crate::store::schema::{Anchor, StatusName};
-use crate::store::state::NodeFile;
+use crate::store::quality::{Bar, Hit, PreparedBar, Scan};
+
+use crate::store::model::DecisionField;
+use crate::store::model::NodeFile;
+use crate::store::model::{Anchor, StatusName};
 use crate::store::{Store, Writer};
 use crate::{Error, Result};
 

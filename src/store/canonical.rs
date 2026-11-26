@@ -15,8 +15,8 @@
 
 use std::fmt::{self, Write};
 
-use super::quality::{Pattern, Quality, WordRange};
-use super::schema::{AcceptedVia, Anchor, Component, Decision, Project, Status};
+use crate::store::model::{AcceptedVia, Anchor, Component, Decision, Project, Status};
+use crate::store::model::{Pattern, Quality, WordRange};
 
 /// A file type with a canonical form.
 pub(crate) trait Canonical {
@@ -295,7 +295,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
-    use crate::store::schema::{AcceptedText, Placement};
+    use crate::store::model::{AcceptedText, Placement};
     use crate::store::testing::{sample_decision, ts};
     use crate::store::{FORMAT_VERSION, Timestamp};
 
@@ -434,7 +434,7 @@ accepted_via = "cli"
     /// it holds a `'`; the default table is left out.
     #[test]
     fn a_quality_table_is_written_in_its_fixed_layout_and_reads_back() {
-        use crate::store::quality::{DecisionField, Level, Pattern, WordRange};
+        use crate::store::model::{DecisionField, Level, Pattern, WordRange};
 
         let pattern = |text: &str, level| Pattern {
             pattern: text.into(),

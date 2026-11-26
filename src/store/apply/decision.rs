@@ -8,9 +8,10 @@ use super::edit::Edit;
 use super::ops::{Field, ListEdit, Merge, OpKind, Record, Remove, Rename, Revise};
 use super::refusal::{NodeKind, Rule};
 use super::{Done, LeftRepair, Repaired, Warning};
-use crate::store::quality::{Bar, DecisionField, Hit, Scan};
-use crate::store::schema::{AcceptedText, Anchor, Decision, PROJECT_COMPONENT, Status};
-use crate::store::time::Timestamp;
+use crate::store::model::DecisionField;
+use crate::store::model::Timestamp;
+use crate::store::model::{AcceptedText, Anchor, Decision, PROJECT_COMPONENT, Status};
+use crate::store::quality::{Bar, Hit, Scan};
 
 /// What the ops of one batch share: what every record carries, the bar
 /// each written decision meets and what its patterns may still read, the

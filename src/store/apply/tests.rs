@@ -6,7 +6,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::store::canonical::canonical;
-use crate::store::schema::{AcceptedText, AcceptedVia, Anchor, Decision, Status};
+use crate::store::model::{AcceptedText, AcceptedVia, Anchor, Decision, Status};
 use crate::store::testing::{
     changed_in, graph_log, sample_component, sample_decision, setup_store, shared_store, write_node,
 };

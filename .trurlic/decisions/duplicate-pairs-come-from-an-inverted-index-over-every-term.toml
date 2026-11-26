@@ -22,7 +22,7 @@ anchors = [
     { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::works" },
     { file = "src/lint/duplicates/tests.rs", symbol = "the_index_finds_every_pair_the_exact_test_over_all_pairs_finds" },
     { file = "src/lint/duplicates/tests.rs", symbol = "the_probes_run_by_name_while_their_work_is_within_the_bound" },
-    { file = "src/store/limits.rs", symbol = "MAX_DUPLICATE_WORK" },
+    { file = "src/store/model/limits.rs", symbol = "MAX_DUPLICATE_WORK" },
 ]
 depends_on = [
     "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",

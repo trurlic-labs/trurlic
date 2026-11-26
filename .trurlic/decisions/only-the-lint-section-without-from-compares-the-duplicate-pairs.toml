@@ -14,7 +14,7 @@ status = "proposed"
 origin = "duplicate pairs in one bounded pass"
 created = "2026-11-26T10:05:01.103143801Z"
 anchors = [
-    { file = "src/store/limits.rs", symbol = "MAX_DUPLICATE_WORK" },
+    { file = "src/store/model/limits.rs", symbol = "MAX_DUPLICATE_WORK" },
     { file = "src/tools/status/lint/mod.rs", symbol = "gather" },
     { file = "src/tools/status/lint/pairs.rs", symbol = "compared" },
     { file = "src/tools/status/lint/pairs.rs", symbol = "tests::only_the_lint_section_without_from_compares_the_pairs" },

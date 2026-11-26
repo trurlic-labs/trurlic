@@ -1,5 +1,5 @@
 component = "store"
-choice = "store::text is what every graph file holds, an issue check reports; the quality bar binds only writes, so a graph below it loads, passes check and stays revisable"
+choice = "store::model::text is what every graph file holds, an issue check reports; the quality bar binds only writes, so a graph below it loads, passes check and stays revisable"
 reason = "A text rule guards what a reader sees: a hidden, reordering or control character or tool-call markup in any text. It also guards each field's shape: a choice on one line within 200 bytes, a blank alternative or tag, a tag or an origin on two lines. A hand edit that breaks one must fail check, so validation reports it. The bar measures how good a decision is: at least one alternative and one anchor, and the limits and patterns of the project's [quality]. A migrated graph holds decisions without alternatives or anchors, and a project may tighten its bar at any time; as validation issues, the bar would fail check on every such graph at once. So the bar refuses a write alone, and the breaches a graph already holds are a section of status, never an issue of check. A write holds each op to the text rules, the limits and the patterns as it runs, in one order (Bar::judge)."
 alternatives = [
     "Make the bar validation issues: rejected because every migrated graph and every tightened [quality] would fail check at once",
@@ -9,15 +9,23 @@ tags = [
     "quality",
     "validation",
 ]
-status = "accepted"
+status = "proposed"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
+    { file = "src/store/model/text.rs", symbol = "fault" },
     { file = "src/store/quality/bar.rs", symbol = "Bar::judge" },
     { file = "src/store/quality/mod.rs" },
-    { file = "src/store/text.rs", symbol = "fault" },
     { file = "src/store/validate.rs", symbol = "check_text" },
 ]
 depends_on = [
     "validation-holds-every-text-of-a-node-file-to-store-text",
+]
+
+[accepted_text]
+choice = "store::text is what every graph file holds, an issue check reports; the quality bar binds only writes, so a graph below it loads, passes check and stays revisable"
+reason = "A text rule guards what a reader sees: a hidden, reordering or control character or tool-call markup in any text. It also guards each field's shape: a choice on one line within 200 bytes, a blank alternative or tag, a tag or an origin on two lines. A hand edit that breaks one must fail check, so validation reports it. The bar measures how good a decision is: at least one alternative and one anchor, and the limits and patterns of the project's [quality]. A migrated graph holds decisions without alternatives or anchors, and a project may tighten its bar at any time; as validation issues, the bar would fail check on every such graph at once. So the bar refuses a write alone, and the breaches a graph already holds are a section of status, never an issue of check. A write holds each op to the text rules, the limits and the patterns as it runs, in one order (Bar::judge)."
+alternatives = [
+    "Make the bar validation issues: rejected because every migrated graph and every tightened [quality] would fail check at once",
+    "Move the text rules into the bar: rejected because a hand edit holding a bidi control or a leaked tool call would then pass check",
 ]

@@ -15,8 +15,8 @@ status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "benches/corpus.rs", symbol = "bench_read_tools" },
+    { file = "src/store/model/state.rs", symbol = "ProjectState" },
     { file = "src/store/query.rs" },
-    { file = "src/store/state.rs", symbol = "ProjectState" },
 ]
 depends_on = [
     "node-files-are-the-whole-graph-no-index-and-no-hashes",
