@@ -21,3 +21,19 @@ pub(crate) use status::{
     AnchorCounts, Cut, LintItem, PAIRS_MORE, PairCounts, Part, PatternCounts, QualityCounts,
     Report, STATUS, section_names,
 };
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::purity::places_spelling;
+
+    /// No non-test code of the layer spells `mcp`, `commands` or `cli`, so
+    /// no path, `use` list or `super` chain of it reaches a surface.
+    #[test]
+    fn the_tool_layer_names_no_surface() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let found = places_spelling(root, "src/tools", &["mcp", "commands", "cli"]);
+        assert_eq!(found, Vec::<String>::new());
+    }
+}

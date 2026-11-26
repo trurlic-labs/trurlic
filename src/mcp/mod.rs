@@ -424,6 +424,15 @@ mod tests {
         );
     }
 
+    /// The transport sits below the commands that serve it: no non-test
+    /// code of it spells `commands` or `cli`.
+    #[test]
+    fn the_transport_names_no_command() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let found = crate::purity::places_spelling(root, "src/mcp", &["commands", "cli"]);
+        assert_eq!(found, Vec::<String>::new());
+    }
+
     #[test]
     fn a_panic_message_names_the_method_and_the_payload() {
         let message = panicked("tools/call", &"boom");

@@ -1,7 +1,9 @@
 //! The check that a pure module (the code index, `lint`) reaches no file
 //! system, process, environment, thread, clock, network or console: an
 //! allow list per module ([`AllowList`]), closed by construction, of what
-//! its non-test code may name.
+//! its non-test code may name. The same reading of a module's non-test
+//! code finds where it spells a name ([`places_spelling`]), which holds a
+//! module off another whatever else it names.
 //!
 //! Every token of every Rust file under the checked directory is read,
 //! macro arguments and bodies included, a raw identifier as its name.
@@ -140,6 +142,25 @@ pub(crate) fn faults(root: &Path, dir: &str, allowed: &AllowList) -> Vec<String>
                 .iter()
                 .map(|(line, what)| format!("{path}:{line}: {what}")),
         );
+    }
+    found
+}
+
+/// Each place the non-test code of the Rust files under `root/dir` spells
+/// one of `names` as a token, as `file:line: names `name``, files sorted.
+/// A module that spells no other module's name names none of its items,
+/// a re-export apart.
+pub(crate) fn places_spelling(root: &Path, dir: &str, names: &[&str]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in sources(root) {
+        if !path.starts_with(&format!("{dir}/")) || !path.ends_with(".rs") {
+            continue;
+        }
+        for (line, token) in read(&text).tokens {
+            if names.contains(&token.as_str()) {
+                found.push(format!("{path}:{line}: names `{token}`"));
+            }
+        }
     }
     found
 }
