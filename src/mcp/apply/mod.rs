@@ -34,7 +34,7 @@ use super::spec::kinds::{List, Object, Text, Union, Variant};
 use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
 use super::spec::{Args, Fields, Kind};
 
-pub(super) static APPLY: ToolSpec<ApplyArgs, Answer> = ToolSpec {
+pub(crate) static APPLY: ToolSpec<ApplyArgs, Answer> = ToolSpec {
     name: "apply",
     title: "Apply",
     description: DESCRIPTION,
@@ -76,7 +76,7 @@ The result names each op's node and what it changed, never the texts.";
 /// of those repairs named then, the stale anchors that read left without a
 /// repair, and the bar compiled before the write.
 #[derive(Debug)]
-pub(super) struct ApplyArgs {
+pub(crate) struct ApplyArgs {
     ops: Vec<Op>,
     origin: Option<String>,
     seen: Seen,

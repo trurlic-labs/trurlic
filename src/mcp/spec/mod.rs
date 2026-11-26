@@ -23,14 +23,14 @@ use std::fmt;
 
 use serde_json::{Map, Value};
 
-pub(crate) use output::Output;
-pub(super) use output::{Shown, output_schema, to_value};
-pub(super) use tool::{TOOLS, find};
+pub(crate) use output::{Output, to_value};
+pub(super) use output::{Shown, output_schema};
+pub(super) use tool::{Destructive, SpecTool};
 
 // -- Declarations ---------------------------------------------------------
 
 /// A tool's arguments, or an object nested in them.
-pub(super) trait Args {
+pub(crate) trait Args {
     fn declare(fields: &mut Fields<'_, '_>) -> Self;
 }
 
@@ -48,7 +48,7 @@ pub(super) trait Kind {
 
 /// The fields of one object, read in the walk that [`input_schema`] or
 /// [`parse`] runs.
-pub(super) struct Fields<'w, 'a> {
+pub(crate) struct Fields<'w, 'a> {
     at: At<'a>,
     walk: Walk<'w, 'a>,
 }

@@ -16,8 +16,8 @@ status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "src/cli.rs", symbol = "ToolCommand" },
-    { file = "src/mcp/spec/tool.rs", symbol = "TOOLS" },
-    { file = "src/mcp/tools.rs", symbol = "call_read_tool" },
+    { file = "src/mcp/registry.rs", symbol = "TOOLS" },
+    { file = "src/mcp/tools.rs", symbol = "Read" },
     { file = "src/store/apply/mod.rs", symbol = "Writer::apply" },
     { file = "tests/integration/golden/tools_list.json" },
 ]

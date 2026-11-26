@@ -29,7 +29,7 @@ use lint::{LINT_MORE, LintItems, LintKind, Patterns};
 use report::{ComponentItem, Counts, HistoryItem, HistoryKind, IssueItem};
 pub(crate) use report::{Part, QualityCounts, Report};
 
-pub(super) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
+pub(crate) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
     name: "status",
     title: "Status",
     description: DESCRIPTION,
@@ -113,7 +113,7 @@ pub(crate) fn section_names() -> impl Iterator<Item = &'static str> {
 
 /// The arguments of `status`, and the flags of `trurlic status`.
 #[derive(Debug)]
-pub(super) struct StatusArgs {
+pub(crate) struct StatusArgs {
     section: Option<Section>,
     origin: Option<String>,
     from: Option<String>,

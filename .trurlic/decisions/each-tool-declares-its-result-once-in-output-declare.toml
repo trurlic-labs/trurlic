@@ -13,11 +13,11 @@ status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
-    { file = "src/mcp/result.rs", symbol = "structured_result" },
+    { file = "src/mcp/listing.rs", symbol = "tests::tool_list_is_the_registry_as_each_tool_declares_itself" },
+    { file = "src/mcp/result.rs", symbol = "ToolResult::structured" },
     { file = "src/mcp/spec/output.rs", symbol = "Output" },
     { file = "src/mcp/spec/output.rs", symbol = "Shown" },
     { file = "src/mcp/spec/tool.rs", symbol = "ToolSpec" },
-    { file = "src/mcp/tools.rs", symbol = "tests::tool_list_is_the_specs_then_the_two_reads" },
 ]
 depends_on = [
     "each-tool-declares-its-arguments-once-in-args-declare",

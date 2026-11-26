@@ -16,6 +16,6 @@ anchors = [
     { file = "src/mcp/context.rs", symbol = "get_context" },
     { file = "src/mcp/context.rs", symbol = "get_decisions_for_file" },
     { file = "src/mcp/context.rs", symbol = "health" },
-    { file = "src/mcp/tools.rs", symbol = "call_read_tool" },
+    { file = "src/mcp/tools.rs", symbol = "Read::answer" },
     { file = "src/store/query.rs" },
 ]

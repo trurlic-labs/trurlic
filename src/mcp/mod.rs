@@ -1,22 +1,33 @@
 //! The MCP server: one session over stdio, each request answered in turn.
 //!
 //! The server holds the directory it was started in and no graph. Every
-//! tool call finds the store from there (`discovery`) and loads it, so a
-//! call answers from the files on disk, and a store created or migrated
-//! while the server runs is served from the next call. Without one,
-//! `initialize` and `tools/list` still answer, and every tool call is
-//! refused naming the command that fixes it.
+//! tool call hands that directory to the tool, which finds the store from
+//! there and loads it, so a call answers from the files on disk, and a
+//! store created or migrated while the server runs is served from the next
+//! call. Without one, `initialize` and `tools/list` still answer, and
+//! every tool call is refused naming the command that fixes it.
 
 mod apply;
 mod context;
+mod envelope;
+mod listing;
 mod peer;
 mod protocol;
+mod registry;
 mod result;
 mod spec;
 mod status;
 mod tools;
 mod truncate;
-pub(crate) mod twin;
+
+pub(crate) use apply::{APPLY, Answer, Duplicates};
+pub(crate) use registry::MAX_REQUEST_BYTES;
+pub(crate) use result::{ToolError, ToolResult};
+pub(crate) use spec::{Output, to_value};
+pub(crate) use status::{
+    AnchorCounts, Cut, LintItem, PAIRS_MORE, PairCounts, Part, PatternCounts, QualityCounts,
+    Report, STATUS, section_names,
+};
 
 use std::any::Any;
 use std::io::{self, BufRead, Write};
@@ -29,16 +40,15 @@ use serde_json::{Map, Value, json};
 
 use crate::Result;
 use crate::console::diag;
-use crate::discovery::discover;
-use crate::store::Store;
 #[cfg(feature = "failpoints")]
 use crate::store::failpoint::{self, Site};
 
+use envelope::ToolEnvelope;
 use peer::{Client, ClientCapabilities, Peer};
 use protocol::{
     INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, Message, Request,
 };
-use result::{ToolEnvelope, structured_result, tool_error};
+use registry::Tool;
 
 /// The protocol revisions the server speaks. `initialize` answers with the
 /// client's when it is one of them, else with the latest.
@@ -168,7 +178,7 @@ impl Server {
                 code: INVALID_REQUEST,
                 message: "server not initialized: send initialize first".into(),
             },
-            "tools/list" => Reply::Success(Body::Listed(tools::tool_list())),
+            "tools/list" => Reply::Success(Body::Listed(listing::tool_list())),
             "tools/call" => {
                 let mut peer = Peer::new(reader, writer, &mut self.client, &request.id);
                 call_tool(&self.cwd, params, &mut peer)
@@ -260,53 +270,35 @@ fn call_tool(cwd: &Path, params: Option<&Map<String, Value>>, peer: &mut Peer<'_
         return invalid_params("tools/call needs a string `name`");
     };
     let arguments = params.get("arguments").unwrap_or(&NO_ARGUMENTS);
-    let Some(object) = arguments.as_object() else {
+    let Some(arguments) = arguments.as_object() else {
         return invalid_params("`arguments` must be an object");
     };
-    let spec_tool = spec::find(name);
-    if spec_tool.is_none() && !tools::is_listed(name) {
+    let Some(tool) = Tool::named(name) else {
         return invalid_params(format!("unknown tool: {name}"));
-    }
+    };
     #[cfg(feature = "failpoints")]
     if failpoint::triggers(Site::ServerRequest) {
-        let envelope = ask_the_client(peer);
-        return answered(peer, envelope);
+        let result = ask_the_client(peer);
+        return answered(peer, result);
     }
-    let envelope = match discover(cwd) {
-        Err(e) => tool_error(&e.into()),
-        Ok(store) => match spec_tool {
-            Some(tool) => tool
-                .call(&store, object)
-                .map_or_else(|refused| tool_error(&refused), structured_result),
-            None => call_unspecified(&store, name, arguments),
-        },
-    };
-    answered(peer, envelope)
+    let result = tool.call(cwd, arguments);
+    answered(peer, result)
 }
 
-/// `envelope` as the call's reply, or none when the client cancelled the
+/// `result` as the call's reply, or none when the client cancelled the
 /// call while it waited.
-fn answered(peer: &Peer<'_>, envelope: ToolEnvelope) -> Reply {
+fn answered(peer: &Peer<'_>, result: ToolResult) -> Reply {
     if peer.cancelled() {
         Reply::Cancelled
     } else {
-        Reply::Success(Body::Tool(envelope))
+        Reply::Success(Body::Tool(result.into()))
     }
-}
-
-/// A tool that predates specs, every one a read: it runs on the graph
-/// loaded under the shared lock, and a failed load is a refusal.
-fn call_unspecified(store: &Store, name: &str, arguments: &Value) -> ToolEnvelope {
-    store.load_state().map_or_else(
-        |e| tool_error(&e.into()),
-        |state| tools::call_read_tool(&state, name, arguments),
-    )
 }
 
 /// The armed tool call sends the client a form in its place, and answers
 /// with the client's answer.
 #[cfg(feature = "failpoints")]
-fn ask_the_client(peer: &mut Peer<'_>) -> ToolEnvelope {
+fn ask_the_client(peer: &mut Peer<'_>) -> ToolResult {
     let form = json!({
         "message": "Confirm the failpoint",
         "requestedSchema": {
@@ -316,8 +308,8 @@ fn ask_the_client(peer: &mut Peer<'_>) -> ToolEnvelope {
         },
     });
     match peer.request(peer::ServerMethod::CreateElicitation, &form) {
-        Ok(answer) => result::tool_result(&answer),
-        Err(e) => tool_error(&result::ToolError::refused(e.to_string())),
+        Ok(answer) => ToolResult::unstructured(&answer),
+        Err(e) => ToolResult::refusal(&ToolError::refused(e.to_string())),
     }
 }
 
@@ -326,7 +318,7 @@ fn ask_the_client(peer: &mut Peer<'_>) -> ToolEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::Placement;
+    use crate::store::{Placement, Store};
 
     fn initialize(version: &str) -> Value {
         json!({

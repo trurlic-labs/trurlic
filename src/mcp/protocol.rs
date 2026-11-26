@@ -14,6 +14,8 @@ use std::io::{self, BufRead, Write};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+use super::registry::MAX_REQUEST_BYTES;
+
 // -- Error codes (JSON-RPC 2.0 section 5.1) -------------------------------
 
 const PARSE_ERROR: i32 = -32700;
@@ -26,8 +28,8 @@ pub(super) const INTERNAL_ERROR: i32 = -32603;
 /// queued behind that call are already at their limit.
 pub(super) const SERVER_BUSY: i32 = -32000;
 
-/// Bytes of one message, and of the document a tool's CLI twin reads.
-pub(crate) const MAX_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
+/// Bytes of one message: the request a tool call arrives in.
+const MAX_MESSAGE_BYTES: usize = MAX_REQUEST_BYTES;
 
 // -- Messages --------------------------------------------------------------
 

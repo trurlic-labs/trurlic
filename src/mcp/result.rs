@@ -1,16 +1,15 @@
-//! What a tool call answers: a payload, or a refusal in one typed shape,
-//! each fitted to [`MAX_TOOL_RESULT_BYTES`] and wrapped in the MCP
-//! tool-result envelope.
+//! What a tool call answers on every surface: a payload, or a refusal in
+//! one typed shape, each fitted to [`MAX_TOOL_RESULT_BYTES`] as JSON text.
 //!
-//! A result built on a spec carries its JSON twice, as `structuredContent`
-//! and as the text of its one content block, so a client that reads either
-//! reads the same value; a cut result is cut in both.
+//! A [`ToolResult`] is built only by its constructors, which fit it, so no
+//! surface can send one past the budget. A result built on a spec carries
+//! its JSON twice, as a value and as the text that value serializes, so a
+//! surface that sends both sends one JSON; a cut result is cut in both.
 //!
-//! A refusal is a result with `isError: true`, never a JSON-RPC error, so
-//! the agent reads it and can correct the call. Its text is the JSON
-//! object `{"error": {"kind", "field"?, "op"?, "rule"?, "message"}}`;
-//! `kind` is what a caller branches on, `field` names the argument at
-//! fault, and a refused batch names its op and the rule it breaks.
+//! A refusal's text is the JSON object `{"error": {"kind", "field"?, "op"?,
+//! "rule"?, "message"}}`; `kind` is what a caller branches on, `field`
+//! names the argument at fault, and a refused batch names its op and the
+//! rule it breaks.
 
 use std::fmt;
 
@@ -22,25 +21,6 @@ use super::truncate;
 use crate::Error;
 use crate::budget::MAX_TOOL_RESULT_BYTES;
 use crate::store::Refusal;
-
-/// Typed MCP tool-result envelope, serialized once, directly into the
-/// JSON-RPC response; `text` holds the payload serialized once.
-#[derive(Debug, Serialize)]
-pub(super) struct ToolEnvelope {
-    content: [TextBlock; 1],
-    /// The text's JSON, for a tool with an `outputSchema`.
-    #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
-    structured_content: Option<Value>,
-    /// Present and `true` for a refusal, omitted for success.
-    #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
-    is_error: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-struct TextBlock {
-    r#type: &'static str,
-    text: String,
-}
 
 /// Why a tool call was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -85,7 +65,7 @@ struct OpRef {
 }
 
 impl ToolError {
-    pub(super) fn refused(message: impl Into<String>) -> Self {
+    pub(crate) fn refused(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Refused, None, message.into())
     }
 
@@ -163,71 +143,60 @@ impl From<Refusal> for ToolError {
     }
 }
 
-/// `payload` serialized within [`MAX_TOOL_RESULT_BYTES`]; see [`truncate`].
-pub(super) fn tool_result(payload: &Value) -> ToolEnvelope {
-    ToolEnvelope {
-        content: [TextBlock {
-            r#type: "text",
-            text: truncate::fit_payload(payload, MAX_TOOL_RESULT_BYTES),
-        }],
-        structured_content: None,
-        is_error: None,
-    }
+/// A tool's answer as a surface sends it: JSON text within
+/// [`MAX_TOOL_RESULT_BYTES`].
+#[derive(Debug)]
+pub(crate) struct ToolResult {
+    text: String,
+    kind: ResultKind,
 }
 
-/// The text of a result built on a spec, with the value it serializes:
-/// `payload` as it is, or as it was cut to fit. The call sends both, a CLI
-/// twin prints the text.
-pub(super) fn result_text(payload: Value) -> (Value, String) {
-    truncate::fit_value(payload, MAX_TOOL_RESULT_BYTES)
+/// What the text of a [`ToolResult`] is.
+#[derive(Debug, PartialEq)]
+pub(crate) enum ResultKind {
+    /// A result built on a spec, with the JSON value its text serializes.
+    Structured(Value),
+    /// The result of a tool that predates specs: its text alone.
+    Unstructured,
+    /// A refusal: `{"error": ...}`.
+    Refusal,
 }
 
-/// The text of a refusal: `{"error": ...}`, cut like any payload when its
-/// message is long. The call sends it, a CLI twin prints it.
-pub(crate) fn refusal_text(error: &ToolError) -> String {
-    truncate::fit_payload(&json!({ "error": error }), MAX_TOOL_RESULT_BYTES)
-}
-
-/// [`tool_result`] with the text's JSON as `structuredContent` too
-/// ([`result_text`]). The text is the serialization of the value sent as
-/// `structuredContent`, so the two cannot differ.
-pub(super) fn structured_result(payload: Value) -> ToolEnvelope {
-    let (structured, text) = result_text(payload);
-    ToolEnvelope {
-        content: [TextBlock {
-            r#type: "text",
+impl ToolResult {
+    /// `payload`, a result built on a spec, as it is or as it was cut to
+    /// fit ([`truncate`]); the text is the serialization of the value kept.
+    pub(crate) fn structured(payload: Value) -> Self {
+        let (value, text) = truncate::fit_value(payload, MAX_TOOL_RESULT_BYTES);
+        Self {
             text,
-        }],
-        structured_content: Some(structured),
-        is_error: None,
-    }
-}
-
-/// `error` as a refusal ([`refusal_text`]).
-pub(super) fn tool_error(error: &ToolError) -> ToolEnvelope {
-    ToolEnvelope {
-        content: [TextBlock {
-            r#type: "text",
-            text: refusal_text(error),
-        }],
-        structured_content: None,
-        is_error: Some(true),
-    }
-}
-
-/// [`tool_error`] for a refusal its tool states as text alone.
-pub(super) fn refusal(message: &str) -> ToolEnvelope {
-    tool_error(&ToolError::refused(message))
-}
-
-#[cfg(test)]
-impl ToolEnvelope {
-    pub(super) fn is_error(&self) -> bool {
-        self.is_error == Some(true)
+            kind: ResultKind::Structured(value),
+        }
     }
 
-    pub(super) fn text(&self) -> &str {
-        &self.content[0].text
+    /// `payload` serialized, cut to fit like any other.
+    pub(crate) fn unstructured(payload: &Value) -> Self {
+        Self {
+            text: truncate::fit_payload(payload, MAX_TOOL_RESULT_BYTES),
+            kind: ResultKind::Unstructured,
+        }
+    }
+
+    /// `error` as `{"error": ...}`, cut like any payload when its message
+    /// is long.
+    pub(crate) fn refusal(error: &ToolError) -> Self {
+        Self {
+            text: truncate::fit_payload(&json!({ "error": error }), MAX_TOOL_RESULT_BYTES),
+            kind: ResultKind::Refusal,
+        }
+    }
+
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The text, and what it is.
+    pub(crate) fn into_parts(self) -> (String, ResultKind) {
+        (self.text, self.kind)
     }
 }
 
@@ -239,23 +208,10 @@ mod tests {
     use crate::mcp::spec::Fault;
     use crate::store::{FORMAT_VERSION, FormatVersion};
 
-    fn wire(envelope: &ToolEnvelope) -> Value {
-        serde_json::to_value(envelope).unwrap()
-    }
-
-    fn refusal_payload(envelope: &ToolEnvelope) -> Value {
-        let wire = wire(envelope);
-        assert_eq!(wire["isError"], true);
-        assert_eq!(wire["content"][0]["type"], "text");
-        serde_json::from_str(wire["content"][0]["text"].as_str().unwrap()).unwrap()
-    }
-
-    #[test]
-    fn a_result_is_its_payload_as_one_text_block() {
-        let wire = wire(&tool_result(&json!({ "count": 3 })));
-        assert!(wire.get("isError").is_none());
-        assert_eq!(wire["content"][0]["type"], "text");
-        assert_eq!(wire["content"][0]["text"], r#"{"count":3}"#);
+    fn refusal_payload(result: ToolResult) -> Value {
+        let (text, kind) = result.into_parts();
+        assert_eq!(kind, ResultKind::Refusal);
+        serde_json::from_str(&text).unwrap()
     }
 
     #[test]
@@ -264,7 +220,7 @@ mod tests {
             field: "ops[2].name".into(),
             fault: Fault::Missing,
         };
-        let payload = refusal_payload(&tool_error(&invalid.into()));
+        let payload = refusal_payload(ToolResult::refusal(&invalid.into()));
         assert_eq!(
             payload,
             json!({ "error": {
@@ -274,7 +230,8 @@ mod tests {
             }})
         );
 
-        let payload = refusal_payload(&refusal("component `x` does not exist"));
+        let refused = ToolError::refused("component `x` does not exist");
+        let payload = refusal_payload(ToolResult::refusal(&refused));
         assert_eq!(
             payload,
             json!({ "error": { "kind": "refused", "message": "component `x` does not exist" } })
@@ -332,7 +289,7 @@ mod tests {
             ),
         ];
         for (error, kind, named) in cases {
-            let payload = refusal_payload(&tool_error(&error.into()));
+            let payload = refusal_payload(ToolResult::refusal(&error.into()));
             assert_eq!(payload["error"]["kind"], kind);
             let message = payload["error"]["message"].as_str().unwrap();
             assert!(message.contains(named), "{kind}: {message}");
@@ -341,34 +298,30 @@ mod tests {
 
     #[test]
     fn a_structured_result_holds_the_same_json_twice_cut_or_not() {
+        let held = |result: ToolResult| match result.into_parts() {
+            (text, ResultKind::Structured(value)) => (text, value),
+            (_, kind) => panic!("not structured: {kind:?}"),
+        };
         for payload in [
             json!({ "count": 3 }),
             json!({ "items": vec!["x".repeat(100); MAX_TOOL_RESULT_BYTES / 50] }),
         ] {
-            let wire = wire(&structured_result(payload));
-            let text: Value =
-                serde_json::from_str(wire["content"][0]["text"].as_str().unwrap()).unwrap();
-            assert_eq!(text, wire["structuredContent"]);
+            let (text, value) = held(ToolResult::structured(payload));
+            assert_eq!(serde_json::from_str::<Value>(&text).unwrap(), value);
         }
-        let cut = wire(&structured_result(
+        let (_, cut) = held(ToolResult::structured(
             json!({ "items": vec!["x".repeat(100); 1000] }),
         ));
-        assert!(cut["structuredContent"]["truncated"].is_array(), "{cut}");
+        assert!(cut["truncated"].is_array(), "{cut}");
         // Deeper than a JSON reader nests: the text cannot be read back,
-        // and `structuredContent` is still the value it serializes.
+        // and the value is still the one it serializes.
         let mut deep = json!({ "text": "x".repeat(MAX_TOOL_RESULT_BYTES) });
         for _ in 0..200 {
             deep = json!({ "nested": deep });
         }
-        let sent = wire(&structured_result(deep));
-        let text = sent["content"][0]["text"].as_str().unwrap();
+        let (text, value) = held(ToolResult::structured(deep));
         assert!(text.len() <= MAX_TOOL_RESULT_BYTES);
-        assert_eq!(sent["structuredContent"].to_string(), text);
-        assert!(
-            wire(&tool_result(&json!({})))
-                .get("structuredContent")
-                .is_none()
-        );
+        assert_eq!(value.to_string(), text);
     }
 
     /// A refused batch names its op, the argument and the rule.
@@ -387,7 +340,7 @@ mod tests {
         };
         let error = Error::Refused(Box::new(refusal));
 
-        let payload = refusal_payload(&tool_error(&error.into()));
+        let payload = refusal_payload(ToolResult::refusal(&error.into()));
 
         assert_eq!(
             payload,
@@ -403,13 +356,10 @@ mod tests {
 
     #[test]
     fn a_long_refusal_fits_the_budget_and_stays_json() {
-        let envelope = refusal(&"x".repeat(MAX_TOOL_RESULT_BYTES * 2));
-        let text = wire(&envelope)["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        assert!(text.len() <= MAX_TOOL_RESULT_BYTES);
-        let payload: Value = serde_json::from_str(&text).unwrap();
+        let refused = ToolError::refused("x".repeat(MAX_TOOL_RESULT_BYTES * 2));
+        let result = ToolResult::refusal(&refused);
+        assert!(result.text().len() <= MAX_TOOL_RESULT_BYTES);
+        let payload = refusal_payload(result);
         assert_eq!(payload["error"]["kind"], "refused");
         assert!(payload["truncated"].is_array(), "{payload}");
     }

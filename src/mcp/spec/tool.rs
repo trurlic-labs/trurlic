@@ -1,16 +1,19 @@
-//! Tools built on a spec, and the registry a call is looked up in.
+//! Tools built on a spec, and the entry point every surface calls them by.
 //!
 //! A tool's [`Access`] states what it runs on, and the call takes that
 //! access for it after its arguments parse: a read the graph loaded under
 //! the shared lock, a write a [`Writer`] under the exclusive one, which a
 //! write may precede with a read of its own that holds no lock. So no
-//! write handler locks, and its `readOnlyHint` is the lock it gets. Its
-//! result is an [`Output`], which gives both its `outputSchema` and the
-//! JSON a call returns.
+//! write handler locks, and whether a surface lists the tool as read-only
+//! follows from the lock it gets. Its result is an [`Output`], which gives
+//! both its output schema and the JSON a call returns.
+
+use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
 use super::{Args, At, Output, input_schema, output_schema, parse, to_value};
+use crate::discovery::discover;
 use crate::mcp::result::ToolError;
 use crate::store::{ProjectState, Store, Writer};
 
@@ -35,15 +38,14 @@ pub(crate) enum Access<A, O> {
     },
 }
 
-/// Whether a write can remove what it does not replace, MCP's
-/// `destructiveHint`.
+/// Whether a write can remove what it does not replace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Destructive {
     No,
     Yes,
 }
 
-/// One tool built on a spec: what `tools/list` shows of it and the handler
+/// One tool built on a spec: what a surface lists of it and the handler
 /// its parsed arguments reach.
 pub(crate) struct ToolSpec<A, O> {
     pub name: &'static str,
@@ -54,9 +56,16 @@ pub(crate) struct ToolSpec<A, O> {
 }
 
 impl<A: Args, O: Output> ToolSpec<A, O> {
+    /// Run the tool with `arguments` on the store found from `cwd`, as
+    /// every surface calls it: no store there is a refusal, then the
+    /// arguments parse, then the tool runs on its access.
+    pub(crate) fn run(&self, cwd: &Path, arguments: &Map<String, Value>) -> Outcome<O> {
+        self.run_on(&discover(cwd)?, arguments)
+    }
+
     /// Parse `arguments`, then run the tool on its access to `store`. An
     /// argument the spec refuses touches no file.
-    pub(crate) fn run(&self, store: &Store, arguments: &Map<String, Value>) -> Outcome<O> {
+    fn run_on(&self, store: &Store, arguments: &Map<String, Value>) -> Outcome<O> {
         let arguments = parse::<A>(arguments, At::Root)?;
         match self.access {
             Access::Read(run) => run(store, &store.load_state()?, arguments),
@@ -72,11 +81,25 @@ impl<A: Args, O: Output> ToolSpec<A, O> {
 pub(crate) trait SpecTool: Sync {
     fn name(&self) -> &'static str;
 
-    /// The tool's entry in `tools/list`.
-    fn definition(&self) -> Value;
+    fn title(&self) -> &'static str;
+
+    fn description(&self) -> &'static str;
+
+    /// Whether the tool runs on the graph loaded under the shared lock,
+    /// and so writes nothing.
+    fn is_read_only(&self) -> bool;
+
+    fn destructive(&self) -> Destructive;
+
+    /// The JSON Schema of the tool's arguments.
+    fn input_schema(&self) -> Map<String, Value>;
+
+    /// The JSON Schema of the tool's result: its declared fields, and the
+    /// `truncated` notice a result cut to the budget carries.
+    fn output_schema(&self) -> Map<String, Value>;
 
     /// [`ToolSpec::run`], its result as JSON.
-    fn call(&self, store: &Store, arguments: &Map<String, Value>) -> Outcome<Value>;
+    fn call(&self, cwd: &Path, arguments: &Map<String, Value>) -> Outcome<Value>;
 }
 
 impl<A: Args, O: Output> SpecTool for ToolSpec<A, O>
@@ -87,54 +110,45 @@ where
         self.name
     }
 
-    fn definition(&self) -> Value {
-        let read_only = matches!(self.access, Access::Read(_));
-        json!({
-            "name": self.name,
-            "title": self.title,
-            "description": self.description,
-            "annotations": {
-                "title": self.title,
-                "readOnlyHint": read_only,
-                "destructiveHint": self.destructive == Destructive::Yes,
-                "idempotentHint": read_only,
-                "openWorldHint": false,
-            },
-            "inputSchema": input_schema::<A>(),
-            "outputSchema": result_schema::<O>(),
-        })
+    fn title(&self) -> &'static str {
+        self.title
     }
 
-    fn call(&self, store: &Store, arguments: &Map<String, Value>) -> Outcome<Value> {
-        self.run(store, arguments).map(|result| to_value(&result))
+    fn description(&self) -> &'static str {
+        self.description
     }
-}
 
-/// The `outputSchema` of a result of `O`: its declared fields, and the
-/// `truncated` notice a result cut to the budget carries.
-fn result_schema<O: Output>() -> Map<String, Value> {
-    let mut schema = output_schema::<O>();
-    if let Some(Value::Object(properties)) = schema.get_mut("properties") {
-        properties.insert(
-            "truncated".into(),
-            json!({
-                "type": "array",
-                "items": { "type": "object" },
-                "description": "Present only when the result was cut to fit the result \
-                    budget: each cut, by JSON pointer, with what it omitted.",
-            }),
-        );
+    fn is_read_only(&self) -> bool {
+        matches!(self.access, Access::Read(_))
     }
-    schema
-}
 
-/// Every tool built on a spec. A call is looked up here first, and
-/// `tools/list` lists these before the tools that predate specs.
-pub(crate) static TOOLS: &[&dyn SpecTool] =
-    &[&crate::mcp::apply::APPLY, &crate::mcp::status::STATUS];
+    fn destructive(&self) -> Destructive {
+        self.destructive
+    }
 
-pub(crate) fn find(name: &str) -> Option<&'static dyn SpecTool> {
-    TOOLS.iter().copied().find(|tool| tool.name() == name)
+    fn input_schema(&self) -> Map<String, Value> {
+        input_schema::<A>()
+    }
+
+    fn output_schema(&self) -> Map<String, Value> {
+        let mut schema = output_schema::<O>();
+        if let Some(Value::Object(properties)) = schema.get_mut("properties") {
+            properties.insert(
+                "truncated".into(),
+                json!({
+                    "type": "array",
+                    "items": { "type": "object" },
+                    "description": "Present only when the result was cut to fit the result \
+                        budget: each cut, by JSON pointer, with what it omitted.",
+                }),
+            );
+        }
+        schema
+    }
+
+    fn call(&self, cwd: &Path, arguments: &Map<String, Value>) -> Outcome<Value> {
+        self.run(cwd, arguments).map(|result| to_value(&result))
+    }
 }
 
 #[cfg(test)]
@@ -206,9 +220,10 @@ mod tests {
         }
     }
 
-    /// Run `tool` on a fresh store with `arguments`.
+    /// Run `tool` on `store` with `arguments`.
     fn call(tool: &ToolSpec<Named, Probed>, store: &Store, arguments: &Value) -> Outcome<Value> {
-        tool.call(store, arguments.as_object().unwrap())
+        tool.run_on(store, arguments.as_object().unwrap())
+            .map(|result| to_value(&result))
     }
 
     fn store() -> (TempDir, Store) {
@@ -218,30 +233,20 @@ mod tests {
     }
 
     #[test]
-    fn the_definition_follows_the_access_and_carries_both_schemas() {
+    fn what_a_surface_lists_follows_the_access_and_carries_both_schemas() {
         let cases = [
-            (spec(Destructive::No, Access::Read(count)), true, false),
-            (spec(Destructive::No, write(unread)), false, false),
-            (spec(Destructive::Yes, write(unread)), false, true),
-            (spec(Destructive::No, write(unlocked)), false, false),
+            (spec(Destructive::No, Access::Read(count)), true),
+            (spec(Destructive::No, write(unread)), false),
+            (spec(Destructive::Yes, write(unread)), false),
+            (spec(Destructive::No, write(unlocked)), false),
         ];
-        for (tool, read_only, destructive) in cases {
-            let definition = tool.definition();
-            let annotations = &definition["annotations"];
-            assert_eq!(annotations["readOnlyHint"], read_only, "{definition}");
-            assert_eq!(annotations["idempotentHint"], read_only, "{definition}");
-            assert_eq!(annotations["destructiveHint"], destructive, "{definition}");
-            assert_eq!(annotations["openWorldHint"], false, "{definition}");
-            assert_eq!(
-                definition["inputSchema"],
-                Value::Object(input_schema::<Named>())
-            );
-            let output = &definition["outputSchema"];
+        for (tool, read_only) in cases {
+            assert_eq!(tool.is_read_only(), read_only, "{:?}", tool.destructive);
+            assert_eq!(tool.input_schema(), input_schema::<Named>());
+            let output = Value::Object(tool.output_schema());
             assert_eq!(output["required"], json!(["name", "count"]), "{output}");
             assert_eq!(output["properties"]["truncated"]["type"], "array");
             assert_eq!(output["additionalProperties"], false);
-            assert_eq!(definition["name"], "probe");
-            assert_eq!(definition["description"], "Probes the store.");
         }
     }
 

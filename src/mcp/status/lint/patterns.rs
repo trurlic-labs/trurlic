@@ -354,7 +354,7 @@ mod tests {
 
     use super::*;
     use crate::lint::quality::Next;
-    use crate::mcp::result::refusal_text;
+    use crate::mcp::result::ToolResult;
     use crate::mcp::spec::to_value;
     use crate::mcp::status::{StatusArgs, status};
     use crate::store::Store;
@@ -501,7 +501,7 @@ mod tests {
         assert_eq!(Patterns::of(None, None).unwrap(), Patterns::NotAsked);
         for section in [None, Some(Section::Issues), Some(Section::Components)] {
             let refused = Patterns::of(section, Some("d1")).unwrap_err();
-            let text: Value = serde_json::from_str(&refusal_text(&refused)).unwrap();
+            let text: Value = serde_json::from_str(ToolResult::refusal(&refused).text()).unwrap();
             assert_eq!(text["error"]["field"], "from", "{text}");
         }
     }

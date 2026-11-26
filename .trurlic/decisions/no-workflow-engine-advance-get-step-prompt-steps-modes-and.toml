@@ -16,5 +16,5 @@ created = "2026-11-23T20:06:23.818625901Z"
 anchors = [
     { file = "src/lib.rs" },
     { file = "src/mcp/context.rs", symbol = "get_context" },
-    { file = "src/mcp/tools.rs", symbol = "TOOL_DEFINITIONS" },
+    { file = "src/mcp/registry.rs", symbol = "TOOLS" },
 ]
