@@ -14,10 +14,10 @@ store      → git                         graph files: schema, canonical form, 
                                          migrations, a shared graph's history
 tools      → store, lint, sources,       the tools, known to no surface: specs (schema = parser),
              budget, discovery           `apply`, `status`, the pre-spec reads, registry, result cap
-mcp        → tools, store                JSON-RPC stdio server: protocol, client, envelope, `tools/list`
+mcp        → tools, store, budget        JSON-RPC stdio server: protocol, client, envelope, `tools/list`
 commands   → store, tools, mcp (serve),  init, apply, status, query, check, fmt, migrate, install, serve
              sources, lint, git,
-             discovery
+             discovery, budget
 cli        → commands, store             clap definitions and dispatch
 discovery  → store, git                  graph and code root from the calling directory
 lint       → store, code                 pure findings over the graph that refuse nothing: likely
@@ -30,7 +30,7 @@ code       → store (types)               pure code index: what an index holds 
                                          tree-sitter and lexical resolvers (`parse/`, `lexical/`), facts
                                          over a whole tree (`tree/`)
 git        → —                           `git` as a child process; `git::graph` = the graph's own repo
-budget     → —                           fitting output into a byte budget
+budget     → —                           a tool call's byte limits, fitting output into a byte budget
 error      → store (types)               `Error`, `Result`
 console    → —                           `out!` (stdout), `diag!` (stderr)
 purity     → code (tests only)           the check that `code` and `lint` name only their allow lists

@@ -12,10 +12,6 @@ use super::result::ToolResult;
 use super::spec::SpecTool;
 use super::status::STATUS;
 
-/// Bytes of the request one tool call arrives in, on every surface: a
-/// message the server reads, a batch document `trurlic apply` reads.
-pub(crate) const MAX_REQUEST_BYTES: usize = 10 * 1024 * 1024;
-
 /// A tool a surface lists and calls.
 #[derive(Clone, Copy)]
 pub(crate) enum Tool {

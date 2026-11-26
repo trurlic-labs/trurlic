@@ -5,9 +5,10 @@ use std::path::Path;
 use serde_json::{Map, Value};
 
 use crate::Result;
+use crate::budget::MAX_REQUEST_BYTES;
 use crate::console::{diag, out};
 use crate::store::{Applied, Done, Field, OpKind, Warning};
-use crate::tools::{APPLY, Answer, Duplicates, MAX_REQUEST_BYTES, PAIRS_MORE, ToolError};
+use crate::tools::{APPLY, Answer, Duplicates, PAIRS_MORE, ToolError};
 
 use super::{Format, answer};
 

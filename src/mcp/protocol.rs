@@ -6,7 +6,7 @@
 //! response, a line that is no message one error (carrying the `id` of a
 //! line with a `method` when one can be read; a line without one would be
 //! a response, whose `id` is the server's), a notification or a response
-//! none. A line longer than [`MAX_MESSAGE_BYTES`], its newline not
+//! none. A line longer than [`MAX_REQUEST_BYTES`], its newline not
 //! counted, is read to its end and discarded whole, so its tail is never
 //! taken for a message of its own.
 
@@ -15,7 +15,7 @@ use std::io::{self, BufRead, Write};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::tools::MAX_REQUEST_BYTES;
+use crate::budget::MAX_REQUEST_BYTES;
 
 // -- Error codes (JSON-RPC 2.0 section 5.1) -------------------------------
 
@@ -28,9 +28,6 @@ pub(super) const INTERNAL_ERROR: i32 = -32603;
 /// request arrived while a tool call waits on the client and the requests
 /// queued behind that call are already at their limit.
 pub(super) const SERVER_BUSY: i32 = -32000;
-
-/// Bytes of one message: the request a tool call arrives in.
-const MAX_MESSAGE_BYTES: usize = MAX_REQUEST_BYTES;
 
 // -- Messages --------------------------------------------------------------
 
@@ -97,13 +94,13 @@ pub(super) fn read_message(
     reader: &mut (impl BufRead + ?Sized),
 ) -> io::Result<Option<Result<Message, Malformed>>> {
     loop {
-        let Some(line) = read_line(reader, MAX_MESSAGE_BYTES)? else {
+        let Some(line) = read_line(reader, MAX_REQUEST_BYTES)? else {
             return Ok(None);
         };
         let Line::Complete(bytes) = line else {
             return Ok(Some(Err(Malformed::invalid(
                 Value::Null,
-                format!("message exceeds {MAX_MESSAGE_BYTES} bytes; the line was discarded"),
+                format!("message exceeds {MAX_REQUEST_BYTES} bytes; the line was discarded"),
             ))));
         };
         let text = bytes.trim_ascii();
@@ -520,7 +517,7 @@ mod tests {
         assert!(read_line(&mut reader, 10).unwrap().is_none());
     }
 
-    /// A message of exactly [`MAX_MESSAGE_BYTES`] is read, as a batch of
+    /// A message of exactly [`MAX_REQUEST_BYTES`] is read, as a batch of
     /// that size is by `trurlic apply`; one byte more is refused.
     #[test]
     fn a_message_of_the_limit_is_read_and_one_past_it_is_refused() {
@@ -529,9 +526,9 @@ mod tests {
             let padding = "x".repeat(bytes - frame);
             format!(r#"{{"jsonrpc":"2.0","method":"n","params":{{"p":"{padding}"}}}}"#)
         };
-        let at = message(MAX_MESSAGE_BYTES);
-        assert_eq!(at.len(), MAX_MESSAGE_BYTES);
-        let input = format!("{at}\n{}\n", message(MAX_MESSAGE_BYTES + 1));
+        let at = message(MAX_REQUEST_BYTES);
+        assert_eq!(at.len(), MAX_REQUEST_BYTES);
+        let input = format!("{at}\n{}\n", message(MAX_REQUEST_BYTES + 1));
         let mut reader = input.as_bytes();
 
         assert!(matches!(
@@ -542,7 +539,7 @@ mod tests {
             panic!("a message past the limit was read");
         };
         assert_eq!((refused.code, refused.id), (INVALID_REQUEST, Value::Null));
-        let exceeds = format!("exceeds {MAX_MESSAGE_BYTES} bytes");
+        let exceeds = format!("exceeds {MAX_REQUEST_BYTES} bytes");
         assert!(refused.message.contains(&exceeds), "{}", refused.message);
     }
 
