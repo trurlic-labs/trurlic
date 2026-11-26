@@ -12,13 +12,20 @@ use tree_sitter::Node;
 use crate::code::FileKind;
 use crate::code::testing::{RUST_LEXICON, Scopes, Token as Event, parse, text_of};
 
-use super::test_code::{FileMarks, Held, held_by, test_files};
+use super::test_code::{FileMarks, Held, held_by, modules_dir, test_files};
+
+/// What a `#[path]` is refused as. It is refused in test code too: the
+/// file it names is read as the module its own path spells.
+const PATH_ATTRIBUTE: &str = "#[path]";
 
 /// A crate as the checks read it.
 pub(crate) struct Crate {
     /// What is read of each Rust file that is not test code whole, by its
     /// path from the crate's directory.
     files: BTreeMap<String, Read>,
+    /// Each form the reading cannot follow, as `file:line: what`, files
+    /// sorted ([`Crate::refusals`]).
+    refused: Vec<String>,
     /// The crate names of the dependencies its manifest states, as a path
     /// spells them.
     pub(super) dependencies: Vec<String>,
@@ -31,8 +38,8 @@ pub(super) struct Read {
     /// The path from the crate root of the file's module, then of each
     /// inline module in it, in the order the tokens enter them.
     pub(super) modules: Vec<Vec<String>>,
-    /// Each form outside test items the check cannot read through: its
-    /// line and what it is.
+    /// Each form outside test items the check cannot read through, and
+    /// each `#[path]`: its line and what it is.
     refused: Vec<(usize, &'static str)>,
     /// What decides whether it is test code whole.
     marks: FileMarks,
@@ -63,12 +70,23 @@ impl Crate {
             .map(|(path, file)| (path.as_str(), &file.marks))
             .collect();
         let tests: BTreeSet<String> = test_files(&marks).into_iter().map(str::to_owned).collect();
+        let refused = read
+            .iter()
+            .flat_map(|(path, file)| {
+                let test = tests.contains(path);
+                file.refused
+                    .iter()
+                    .filter(move |(_, what)| !test || *what == PATH_ATTRIBUTE)
+                    .map(move |(line, what)| format!("{path}:{line}: {what}"))
+            })
+            .collect();
         let files = read
             .into_iter()
             .filter(|(path, _)| !tests.contains(path))
             .collect();
         Self {
             files,
+            refused,
             dependencies,
         }
     }
@@ -77,14 +95,7 @@ impl Crate {
     /// in any file, as `file:line: what`, files sorted: every check
     /// reports them, since one hides code or a module from all of them.
     pub(super) fn refusals(&self) -> Vec<String> {
-        self.files
-            .iter()
-            .flat_map(|(path, file)| {
-                file.refused
-                    .iter()
-                    .map(move |(line, what)| format!("{path}:{line}: {what}"))
-            })
-            .collect()
+        self.refused.clone()
     }
 
     /// The files of the module `module` and of the modules in it, a path
@@ -145,6 +156,7 @@ fn read(path: &str, text: &str) -> Read {
         .filter(|(_, at, _)| !held(*at))
         .map(|&(line, _, what)| (line, what))
         .collect();
+    refused.extend(marks.paths.iter().map(|&line| (line, PATH_ATTRIBUTE)));
     refused.extend(macro_scopes(&marks, held));
     refused.extend(walked.refused);
     refused.extend(refused_tokens(&walked.tokens));
@@ -170,13 +182,14 @@ fn read(path: &str, text: &str) -> Read {
 /// What one pass over a file's tree finds, test items included: the
 /// bytes of each item a test mark holds, each `mod name;` with its first
 /// byte, each module whose file the check cannot place (line, first byte,
-/// why), each `macro_rules!` definition, the first byte of each `mod`
-/// item, and whether the file is test code whole.
+/// why), the line of each `#[path]`, each `macro_rules!` definition, the
+/// first byte of each `mod` item, and whether the file is test code whole.
 #[derive(Default)]
 struct Marks {
     held: Vec<Range<usize>>,
     declared: Vec<(String, usize)>,
     refused: Vec<(usize, usize, &'static str)>,
+    paths: Vec<usize>,
     macros: Vec<Macro>,
     modules: Vec<usize>,
     test: bool,
@@ -206,6 +219,9 @@ fn marks(root: Node<'_>, text: &str) -> Marks {
             None => {}
         }
         match node.kind() {
+            "attribute_item" | "inner_attribute_item" if names_a_path(node, text) => {
+                marks.paths.push(line);
+            }
             "token_tree" => marks.refused.extend(
                 declared_modules(node, text)
                     .into_iter()
@@ -266,8 +282,8 @@ fn macro_scopes(marks: &Marks, held: impl Fn(usize) -> bool) -> Vec<(usize, &'st
 }
 
 /// What a walk of a file's tokens yields: [`Read::tokens`],
-/// [`Read::modules`], and each string of an attribute that holds an
-/// escape.
+/// [`Read::modules`], and each form of an attribute it refuses
+/// ([`push_token`]).
 struct Walked {
     tokens: Vec<Token>,
     modules: Vec<Vec<String>>,
@@ -275,9 +291,7 @@ struct Walked {
 }
 
 /// The tokens of `root`, a file's tree, outside the bytes `held` marks,
-/// each with the module it stands in, `own` the file's. A string inside
-/// an attribute that spells a path of two segments or more is read as
-/// that path's tokens ([`attribute_path`]).
+/// each with the module it stands in, `own` the file's.
 fn walk(root: Node<'_>, text: &str, own: Vec<String>, held: impl Fn(usize) -> bool) -> Walked {
     let mut walked = Walked {
         tokens: Vec::new(),
@@ -288,8 +302,10 @@ fn walk(root: Node<'_>, text: &str, own: Vec<String>, held: impl Fn(usize) -> bo
     let mut attributes = 0_usize;
     crate::code::testing::tokens(root, text, &RUST_LEXICON, |event| {
         match event {
-            Event::Enter(node) if is_attribute(node) => attributes += 1,
-            Event::Leave(node) if is_attribute(node) => attributes = attributes.saturating_sub(1),
+            Event::Enter(node) if is_attribute(node, text) => attributes += 1,
+            Event::Leave(node) if is_attribute(node, text) => {
+                attributes = attributes.saturating_sub(1);
+            }
             Event::Enter(node) if is_inline_module(node) => {
                 let name = node
                     .child_by_field_name("name")
@@ -317,7 +333,10 @@ fn walk(root: Node<'_>, text: &str, own: Vec<String>, held: impl Fn(usize) -> bo
 }
 
 /// Pushes the token `node`, standing in the module `module` and inside an
-/// attribute or not, onto `walked`.
+/// attribute or not, onto `walked`. Inside an attribute, a string is
+/// read for the paths it spells ([`spelled_paths`]) and refused when it
+/// holds a `\x` or `\u` escape, which may spell any of them; `macro_use` is
+/// refused, as it brings a module's macros into scope with no path.
 fn push_token(
     node: Node<'_>,
     text: &str,
@@ -331,79 +350,93 @@ fn push_token(
         text: text.to_owned(),
         module,
     };
-    if in_attribute && node.kind().ends_with("string_literal") {
-        match attribute_path(spelled) {
-            Literal::Path(segments) => {
-                walked.tokens.extend(segments.into_iter().map(token));
-                return;
-            }
-            Literal::Escaped => walked
-                .refused
-                .push((line, "an escape in an attribute's string")),
-            Literal::Text => {}
-        }
-    }
     let name = match node.kind() {
         "identifier" => spelled.strip_prefix("r#").unwrap_or(spelled),
         _ => spelled,
     };
+    if in_attribute && node.kind().ends_with("string_literal") {
+        // A line's closing `\` drops the newline and the next line's
+        // leading whitespace.
+        let lines: Vec<&str> = spelled.split("\\\n").map(str::trim_start).collect();
+        let joined = lines.concat();
+        if joined.contains("\\x") || joined.contains("\\u") {
+            let why = "an escape in an attribute's string";
+            walked.refused.push((line, why));
+        }
+        walked
+            .tokens
+            .extend(spelled_paths(&joined).into_iter().map(token));
+    } else if in_attribute && name == "macro_use" {
+        walked.refused.push((line, "#[macro_use]"));
+    }
     walked.tokens.push(token(name));
 }
 
-/// What a string literal inside an attribute is read as.
-enum Literal<'t> {
-    /// The tokens of the path it spells (`crate`, `::`, `store`, ...).
-    Path(Vec<&'t str>),
-    /// It holds a `\x` or `\u` escape, which may spell any path.
-    Escaped,
-    /// Anything else: a message, a name, a single word. A single word
-    /// names an item in scope, which a `use` or a definition the check
-    /// reads accounts for.
-    Text,
-}
-
-/// What `literal`, a string literal's token inside an attribute
-/// (`"crate::x::f"`, `r#"super::f"#`), is read as. A path of two segments
-/// or more is read as a path in code is (`#[serde(with = "...")]`,
-/// `default = "..."`, `try_from = "..."`).
-fn attribute_path(literal: &str) -> Literal<'_> {
-    let raw = literal.strip_prefix('r').map(|rest| rest.trim_matches('#'));
-    let Some(inside) = raw
-        .unwrap_or(literal)
-        .strip_prefix('"')
-        .and_then(|inside| inside.strip_suffix('"'))
-    else {
-        return Literal::Text;
+/// The tokens of each path of two segments or more that `literal`, a
+/// string literal, spells anywhere in it: segments joined by `::`, with
+/// or without whitespace around it (`"crate::x::f"`, `"Vec<super::T>"`,
+/// `"T: crate :: Bound"`). A single word names an item in scope, which a
+/// `use` or a definition the check reads accounts for. A leading `::`
+/// is left out, as a path in code is read without it.
+fn spelled_paths(literal: &str) -> Vec<&str> {
+    let lexemes = lexemes(literal);
+    let is_segment = |at: usize| {
+        lexemes
+            .get(at)
+            .is_some_and(|lexeme| *lexeme == "$crate" || is_word(lexeme))
     };
-    if raw.is_none() && (inside.contains("\\x") || inside.contains("\\u")) {
-        return Literal::Escaped;
-    }
-    let (absolute, relative) = match inside.strip_prefix("::") {
-        Some(rest) => (true, rest),
-        None => (false, inside),
-    };
-    let segments: Vec<&str> = relative.split("::").collect();
-    let is_path = segments.len() > 1
-        && segments
-            .iter()
-            .enumerate()
-            .all(|(at, segment)| is_word(segment) || (at == 0 && *segment == "$crate"));
-    if !is_path {
-        return Literal::Text;
-    }
     let mut tokens = Vec::new();
-    for (at, segment) in segments.into_iter().enumerate() {
-        if at > 0 || absolute {
-            tokens.push("::");
+    let mut at = 0;
+    while at < lexemes.len() {
+        let mut end = at + 1;
+        while is_segment(at) && lexemes.get(end) == Some(&"::") && is_segment(end + 1) {
+            end += 2;
         }
-        tokens.push(segment);
+        tokens.extend(
+            lexemes
+                .get(at..end)
+                .filter(|run| run.len() > 1)
+                .unwrap_or_default(),
+        );
+        at = end;
     }
-    Literal::Path(tokens)
+    tokens
 }
 
-/// Whether `node` is an attribute, outer or inner.
-fn is_attribute(node: Node<'_>) -> bool {
-    matches!(node.kind(), "attribute_item" | "inner_attribute_item")
+/// `text` cut into words (a `$` before one included), `::` and single
+/// characters, whitespace dropped.
+fn lexemes(text: &str) -> Vec<&str> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(first) = rest.chars().next() {
+        let sigil = usize::from(first == '$');
+        let word = rest
+            .get(sigil..)
+            .unwrap_or_default()
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len() - sigil);
+        let length = match (rest.starts_with("::"), word) {
+            (true, _) => 2,
+            (false, 0) => first.len_utf8(),
+            (false, word) => sigil + word,
+        };
+        let (lexeme, after) = rest.split_at(length);
+        if !lexeme.trim().is_empty() {
+            found.push(lexeme);
+        }
+        rest = after;
+    }
+    found
+}
+
+/// Whether `node` is an attribute, outer or inner, other than `doc`,
+/// whose strings are prose.
+fn is_attribute(node: Node<'_>, text: &str) -> bool {
+    let doc = node
+        .named_child(0)
+        .and_then(|attribute| attribute.named_child(0))
+        .is_some_and(|path| text_of(path, text) == "doc");
+    matches!(node.kind(), "attribute_item" | "inner_attribute_item") && !doc
 }
 
 /// Whether `node` is a `mod name { .. }` item.
@@ -412,17 +445,13 @@ fn is_inline_module(node: Node<'_>) -> bool {
 }
 
 /// The line and what of each form among `tokens` the check cannot read
-/// through: an attribute that names a module's file, `include!`, whose
-/// file it does not read, `macro_use`, which brings a module's macros
-/// into scope with no path, and `extern crate`, which names a crate, or
-/// the crate itself, by a name no list holds.
+/// through: `include!`, whose file it does not read, and `extern crate`,
+/// which names a crate, or the crate itself, by a name no list holds.
 fn refused_tokens(tokens: &[Token]) -> Vec<(usize, &'static str)> {
     let mut found = Vec::new();
     for (at, token) in tokens.iter().enumerate() {
         let refused = match (token.text.as_str(), text_at(tokens, at + 1)) {
-            ("#", "[" | "!") if names_a_path(tokens, at) => "#[path]",
             ("include", "!") => "include!",
-            ("macro_use", _) => "#[macro_use]",
             ("extern", "crate") => "extern crate",
             _ => continue,
         };
@@ -431,37 +460,33 @@ fn refused_tokens(tokens: &[Token]) -> Vec<(usize, &'static str)> {
     found
 }
 
-/// Whether the attribute that opens at `at`, its `#`, names a `path`
-/// anywhere in its brackets: `#[path = ..]` or `#[cfg_attr(.., path =
-/// ..)]`.
-fn names_a_path(tokens: &[Token], at: usize) -> bool {
-    let mut depth = 0_usize;
-    for n in at + 1.. {
-        match text_at(tokens, n) {
-            "" => return false,
-            "[" | "(" | "{" => depth += 1,
-            "]" | ")" | "}" => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return false;
-                }
-            }
-            "path" if text_at(tokens, n + 1) == "=" => return true,
-            _ => {}
+/// Whether the attribute `node` names a `path` anywhere in its brackets:
+/// `#[path = ..]` or `#[cfg_attr(.., path = ..)]`.
+fn names_a_path(node: Node<'_>, text: &str) -> bool {
+    let mut pending = vec![node];
+    while let Some(node) = pending.pop() {
+        let mut cursor = node.walk();
+        pending.extend(node.children(&mut cursor));
+        let assigned = node.next_sibling().is_some_and(|next| next.kind() == "=");
+        if assigned && text_of(node, text) == "path" {
+            return true;
         }
     }
     false
 }
 
-/// Each `mod name` among the tokens of `tree`, a token tree: its line and
-/// its first byte.
+/// Each `mod name` among the tokens of `tree`, a token tree, the name a
+/// macro's metavariable or not: its line and its first byte.
 fn declared_modules(tree: Node<'_>, text: &str) -> Vec<(usize, usize)> {
     let mut cursor = tree.walk();
     let tokens: Vec<Node<'_>> = tree.children(&mut cursor).collect();
     tokens
         .windows(2)
         .filter_map(|pair| match pair {
-            [keyword, name] if text_of(*keyword, text) == "mod" && name.kind() == "identifier" => {
+            [keyword, name]
+                if text_of(*keyword, text) == "mod"
+                    && matches!(name.kind(), "identifier" | "metavariable") =>
+            {
                 Some((keyword.start_position().row + 1, keyword.start_byte()))
             }
             _ => None,
@@ -526,10 +551,10 @@ fn dependencies(texts: &[(String, String)]) -> Vec<String> {
 /// `code` for `src/code/mod.rs`, `code::parse::rust::marks` for
 /// `src/code/parse/rust/marks.rs`, none for `src/lib.rs`.
 fn module_path(path: &str) -> Vec<&str> {
-    let inside = path.trim_start_matches("src/").trim_end_matches(".rs");
-    let mut segments: Vec<&str> = inside.split('/').collect();
-    if matches!(segments.last(), Some(&("mod" | "lib" | "main"))) {
-        segments.pop();
-    }
-    segments
+    modules_dir(path)
+        .strip_prefix("src")
+        .unwrap_or_default()
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect()
 }

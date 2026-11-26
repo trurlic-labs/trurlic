@@ -9,29 +9,29 @@
 //!
 //! Every token of every Rust file under `src` is read, macro arguments
 //! and bodies included, a raw identifier as its name. A string inside an
-//! attribute that spells a path of two segments or more
-//! (`#[serde(with = "crate::x::f")]`) is read as that path; a single word
-//! there (`try_from = "Raw"`) names an item in scope, which its `use` or
-//! its definition accounts for. Test code is left out by a rule of the
-//! check's own, never the index's. It is an item an exact `#[test]` or
-//! `#[cfg(test)]` marks, or whose body opens with an inner
-//! `#![cfg(test)]`, a file whose every `mod` declaration is such an item
-//! or in a test file, and a file whose root holds an inner
-//! `#![cfg(test)]`. A path's first segment says where it goes, a `use`
-//! list read whole. The crate is `crate`, `$crate`, or `super`s, read
-//! from the module the path is named in, an inline module's included.
+//! attribute other than `doc` is read for each path of two segments or
+//! more it spells anywhere (`#[serde(with = "crate::x::f")]`,
+//! `bound = "T: Into<crate::x::T>"`), a line it continues joined; a
+//! single word there (`try_from = "Raw"`) names an item in scope, which
+//! its `use` or its definition accounts for. Test code is left out by the
+//! rule of `test_code`. A path's first segment says where it goes, a
+//! `use` list read whole. The crate is `crate`, `$crate`, or `super`s,
+//! read from the module the path is named in, an inline module's
+//! included.
 //!
 //! Every check refuses, in any file of the crate's non-test code, each
-//! form that hides code or a module from all of them: an attribute that
-//! names a `path` (`#[path = ..]`, `#[cfg_attr(.., path = ..)]`),
-//! `include!`, a `mod name` in a macro's tokens, and a `mod name;` inside
-//! an inline module, whose file the check places by its declaring file's
-//! path alone. So are `#[macro_use]` and `extern crate`, which bring a
-//! module's macros or a crate into scope under a name no list holds, a
-//! module declared in the textual scope of a `macro_rules!`, whose body
-//! it may invoke with no path, a `\x` or `\u` escape in an attribute's
-//! string, which may spell a path, and a file the grammar does not parse
-//! whole, whose bytes error recovery passes over unread.
+//! form that hides code or a module from all of them: `include!`, a
+//! `mod name` in a macro's tokens, the name a metavariable or not, and a
+//! `mod name;` inside an inline module, whose file the check places by
+//! its declaring file's path alone. So are `#[macro_use]` and `extern
+//! crate`, which bring a module's macros or a crate into scope under a
+//! name no list holds, a module declared in the textual scope of a
+//! `macro_rules!`, whose body it may invoke with no path, a `\x` or `\u`
+//! escape in an attribute's string, which may spell a path, and a file the
+//! grammar does not parse whole, whose bytes error recovery passes over
+//! unread. An attribute that names a `path` (`#[path = ..]`,
+//! `#[cfg_attr(.., path = ..)]`) is refused in test code too, since the
+//! file it names is read as the module its own path spells.
 //!
 //! A pure module names `std`, `core` and `alloc` only through the modules
 //! of `STD_MODULES` and the items of its list. It names the crate only

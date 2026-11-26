@@ -44,14 +44,19 @@ pub(super) fn paths(file: &Read) -> Vec<Named<'_>> {
 }
 
 /// Whether a path starts at `at`: a word or `$crate` that no `::` or `.`
-/// comes before, and no visibility's `pub(..)` holds.
+/// comes before, and no visibility holds (`pub(crate)`, `pub(super)`,
+/// `pub(self)`, `pub(in ..)`). A tuple field's parenthesised type
+/// (`pub (crate::x::T)`) is a path.
 fn starts_path(tokens: &[Token], at: usize) -> bool {
     let back = |by: usize| at.checked_sub(by).map_or("", |n| text_at(tokens, n));
     let first = back(0);
     let word = first == "$crate" || first == "::" || is_word(first);
     let continues = matches!(back(1), "::" | ".");
-    let visibility = (back(1) == "(" && back(2) == "pub")
-        || (back(1) == "in" && back(2) == "(" && back(3) == "pub");
+    let restricted = matches!(first, "crate" | "super" | "self")
+        && back(1) == "("
+        && back(2) == "pub"
+        && text_at(tokens, at + 1) == ")";
+    let visibility = restricted || (back(1) == "in" && back(2) == "(" && back(3) == "pub");
     word && !continues && !visibility
 }
 

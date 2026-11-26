@@ -108,25 +108,20 @@ pub(super) fn test_files<'a>(files: &BTreeMap<&'a str, &FileMarks>) -> BTreeSet<
 }
 
 /// The directory of the files the `mod name;` items of the file at `path`
-/// declare: `a/b` for `a/b.rs`, `a/b/mod.rs` and `a/b/lib.rs`.
-fn modules_dir(path: &str) -> String {
-    let stem = path.trim_end_matches(".rs");
-    match stem.rsplit_once('/') {
-        Some((dir, "mod" | "lib" | "main")) => dir.to_owned(),
-        Some(_) | None => stem.to_owned(),
+/// declare: `src` for the crate roots `src/lib.rs` and `src/main.rs`,
+/// `a/b` for `a/b.rs` and `a/b/mod.rs`.
+pub(super) fn modules_dir(path: &str) -> &str {
+    if matches!(path, "src/lib.rs" | "src/main.rs") {
+        return "src";
     }
+    let stem = path.strip_suffix(".rs").unwrap_or(path);
+    stem.strip_suffix("/mod").unwrap_or(stem)
 }
 
 /// The directory the module file at `path` is declared from: `a` for
-/// `a/b.rs`, and for `a/b/mod.rs`.
-fn parent_dir(path: &str) -> String {
-    let dir = modules_dir(path);
-    let module = match path.ends_with("/mod.rs") {
-        true => dir.as_str(),
-        false => path,
-    };
-    module
+/// `a/b.rs` and `a/b/mod.rs`, none for a crate root.
+fn parent_dir(path: &str) -> &str {
+    modules_dir(path)
         .rsplit_once('/')
         .map_or("", |(dir, _)| dir)
-        .to_owned()
 }

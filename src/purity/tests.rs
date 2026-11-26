@@ -236,11 +236,12 @@ fn each_path_to_the_outside_is_found_however_it_is_spelled() {
 }
 
 /// Each form a path into the crate above a part can take, one per file
-/// of the part `index::high`, which may name `index::low` and `Error`.
+/// of the part `index::high`, which may name `index::low` and `Error`,
+/// beside a test file named `lib.rs`, which is no crate root.
 const ABOVE: &[(&str, &str)] = &[
     (
         "below",
-        "use crate::index::low::Item;\nuse super::super::low;\nuse crate::Error;\nfn f() -> low::Item { super::super::low::Item }\nmod checks {\n    #![cfg(test)]\n    use crate::index::Root;\n}\nmod inner {\n    use super::super::super::low::Item;\n    use super::super::below::f;\n}\n#[serde(with = \"crate::index::low\", try_from = \"Root\")]\nstruct S;\n",
+        "use crate::index::low::Item;\nuse super::super::low;\nuse crate::Error;\nfn f() -> low::Item { super::super::low::Item }\nmod checks {\n    #![cfg(test)]\n    use crate::index::Root;\n}\nmod inner {\n    use super::super::super::low::Item;\n    use super::super::below::f;\n}\n#[serde(with = \"crate::index::low\", try_from = \"Root\")]\nstruct S;\n#[doc = \"crate::other::g\"]\nstruct D(pub(crate) u8);\n",
     ),
     ("supers", "fn f() { super::super::Root; }\n"),
     ("supers_listed", "use super::super::{low, Root};\n"),
@@ -271,11 +272,25 @@ const ABOVE: &[(&str, &str)] = &[
         "attribute_supers",
         "struct S {\n    #[serde(default = \"super::super::Root::new\")]\n    root: u8,\n}\n",
     ),
+    (
+        "attribute_spaced",
+        "struct S {\n    #[serde(default = \" crate :: other::g \")]\n    root: u8,\n}\n",
+    ),
+    (
+        "attribute_inside",
+        "#[derive(Deserialize)]\n#[serde(bound = \"T: Into<crate::other::Raw>\")]\nstruct S<T>(T);\n",
+    ),
+    (
+        "attribute_continued",
+        "#[derive(Deserialize)]\n#[serde(try_from = \"crate:\\\n    :other::Raw\")]\nstruct S;\n",
+    ),
+    ("tuple_field", "struct S(pub (crate::other::Raw));\n"),
 ];
 
 #[test]
 fn each_path_above_a_part_is_found_however_it_is_spelled() {
-    let mut files = case_files("src/index/high", "#[cfg(test)]\nmod tests;\n", ABOVE);
+    let head = "#[cfg(test)]\nmod tests;\n#[cfg(test)]\nmod lib;\n";
+    let mut files = case_files("src/index/high", head, ABOVE);
     files.extend(
         [
             ("Cargo.toml", "[package]\n"),
@@ -286,6 +301,7 @@ fn each_path_above_a_part_is_found_however_it_is_spelled() {
             ("src/other.rs", "pub fn g() {}\n"),
             ("src/index/low.rs", "pub struct Item;\n"),
             ("src/index/high/tests.rs", "use crate::other::g;\n"),
+            ("src/index/high/lib.rs", ""),
             (
                 "src/index/mod.rs",
                 "pub struct Root;\nmod low;\nmod high;\n",
@@ -312,7 +328,7 @@ fn each_path_above_a_part_is_found_however_it_is_spelled() {
 const UNREADABLE: &[(&str, &str)] = &[
     (
         "clean",
-        "mod before {}\nmacro_rules! m { () => {} }\n#[cfg(test)]\nmod tests {}\n#[error(\"a\\nb \\\"{0}\\\"\")]\nstruct S;\n",
+        "mod before {}\nmacro_rules! m { () => {} }\n#[cfg(test)]\nmod tests {}\n#[error(\"a\\nb \\\"{0}\\\"\")]\nstruct S;\nfn macro_use() {}\n",
     ),
     (
         "path_attribute",
@@ -345,6 +361,14 @@ const UNREADABLE: &[(&str, &str)] = &[
     (
         "macro_module",
         "macro_rules! ship { () => { mod shipped; }; }\n",
+    ),
+    (
+        "macro_module_named",
+        "macro_rules! ship { ($name:ident) => { mod $name; }; }\n",
+    ),
+    (
+        "path_in_test",
+        "#[cfg(test)]\n#[path = \"../elsewhere.rs\"]\nmod elsewhere;\n",
     ),
     (
         "nested_module",
