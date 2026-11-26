@@ -142,20 +142,41 @@ fn get_decisions_for_file(
 mod tests {
     use super::*;
     use crate::store::testing::{anchored, empty_state};
+    use crate::store::{Placement, Store};
+    use crate::tools::ResultKind;
 
     fn arguments(value: &Value) -> &Map<String, Value> {
         value.as_object().unwrap()
     }
 
+    /// A call the read refuses is a refusal of kind `refused` whose message
+    /// names what is wrong: a missing argument, a path out of the project,
+    /// a component the graph does not hold.
     #[test]
-    fn a_missing_argument_is_refused() {
-        let state = empty_state();
-        for (read, needed) in [
-            (Read::Context, "component"),
-            (Read::DecisionsForFile, "file"),
-        ] {
-            let refused = read.answer(&state, arguments(&json!({}))).unwrap_err();
-            assert!(refused.contains(needed), "{}: {refused}", read.name());
+    fn a_refused_call_is_a_refusal_naming_its_fault() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        Store::create(tmp.path(), "demo", Placement::Tracked).unwrap();
+        let cases = [
+            (Read::Context, json!({}), "component"),
+            (Read::DecisionsForFile, json!({}), "file"),
+            (
+                Read::DecisionsForFile,
+                json!({ "file": "../x" }),
+                "invalid file path",
+            ),
+            (
+                Read::Context,
+                json!({ "component": "nope" }),
+                "`nope` does not exist",
+            ),
+        ];
+        for (read, given, named) in cases {
+            let (text, kind) = read.call(tmp.path(), arguments(&given)).into_parts();
+            assert_eq!(kind, ResultKind::Refusal, "{}: {text}", read.name());
+            let refusal: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(refusal["error"]["kind"], "refused", "{text}");
+            let message = refusal["error"]["message"].as_str().unwrap();
+            assert!(message.contains(named), "{}: {message}", read.name());
         }
     }
 
