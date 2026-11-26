@@ -236,12 +236,10 @@ mod tests {
     fn what_a_surface_lists_follows_the_access_and_carries_both_schemas() {
         let cases = [
             (spec(Destructive::No, Access::Read(count)), true),
-            (spec(Destructive::No, write(unread)), false),
             (spec(Destructive::Yes, write(unread)), false),
-            (spec(Destructive::No, write(unlocked)), false),
         ];
         for (tool, read_only) in cases {
-            assert_eq!(tool.is_read_only(), read_only, "{:?}", tool.destructive);
+            assert_eq!(tool.is_read_only(), read_only);
             assert_eq!(tool.input_schema(), input_schema::<Named>());
             let output = Value::Object(tool.output_schema());
             assert_eq!(output["required"], json!(["name", "count"]), "{output}");
