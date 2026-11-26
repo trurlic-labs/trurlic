@@ -17,5 +17,5 @@ anchors = [
     { file = "src/commands/mod.rs", symbol = "open_store" },
     { file = "src/commands/serve.rs", symbol = "serve" },
     { file = "src/commands/status.rs", symbol = "status" },
-    { file = "src/store/access.rs", symbol = "Store::read" },
+    { file = "src/store/write/access.rs", symbol = "Store::read" },
 ]

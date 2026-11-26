@@ -33,9 +33,11 @@ use crate::{Error, Result};
 use super::commit::PendingWrite;
 use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
-use super::history::{CommitMessage, Head, HistoryStep};
-use super::{Store, StoreLock, StorePathFault};
+use super::history::{Head, HistoryStep};
+use super::lock::StoreLock;
+use super::message::CommitMessage;
 use crate::store::format::ensure_regular;
+use crate::store::{Store, StorePathFault};
 
 /// A write's file operations and its history commit. Paths are relative to
 /// the store root.
@@ -464,9 +466,10 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    use super::super::history::HistoryFinding;
+    use super::super::message::Tool;
     use super::*;
     use crate::store::Placement;
-    use crate::store::history::{HistoryFinding, Tool};
     use crate::store::testing::{
         changed_in, graph_git, graph_log, sample_component, setup_store, shared_store,
     };

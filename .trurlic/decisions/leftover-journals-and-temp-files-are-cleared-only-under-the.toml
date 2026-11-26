@@ -13,11 +13,11 @@ tags = [
 status = "accepted"
 created = "2026-10-02T12:18:45.121734062Z"
 anchors = [
-    { file = "src/store/access.rs", symbol = "Store::read" },
-    { file = "src/store/journal.rs", symbol = "PendingHistory" },
-    { file = "src/store/recovery.rs", symbol = "Store::has_leftovers" },
-    { file = "src/store/recovery.rs", symbol = "Store::recover" },
-    { file = "src/store/recovery.rs", symbol = "Store::recover_with" },
+    { file = "src/store/write/access.rs", symbol = "Store::read" },
+    { file = "src/store/write/journal.rs", symbol = "PendingHistory" },
+    { file = "src/store/write/recovery.rs", symbol = "Store::has_leftovers" },
+    { file = "src/store/write/recovery.rs", symbol = "Store::recover" },
+    { file = "src/store/write/recovery.rs", symbol = "Store::recover_with" },
 ]
 depends_on = [
     "every-commit-goes-through-a-flushed-journal-in-state-txn",

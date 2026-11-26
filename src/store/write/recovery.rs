@@ -17,7 +17,8 @@ use crate::console::diag;
 use crate::{Error, Result};
 
 use super::journal::{PendingHistory, Replayed};
-use super::{Store, StoreLock};
+use super::lock::StoreLock;
+use crate::store::Store;
 use crate::store::format::read_dir_if_present;
 
 impl Store {

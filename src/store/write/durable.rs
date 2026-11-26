@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{Error, Result};
 
-use super::Store;
+use crate::store::Store;
 
 impl Store {
     /// A fresh path in `.state/tmp/`, named after this process and a

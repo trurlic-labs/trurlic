@@ -20,10 +20,10 @@ created = "2026-11-23T22:52:37.831647832Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::Unmigrated" },
     { file = "src/store/format/migration/mod.rs", symbol = "Tree" },
-    { file = "src/store/migrate.rs", symbol = "Current::add" },
-    { file = "src/store/migrate.rs", symbol = "Current::node" },
-    { file = "src/store/migrate.rs", symbol = "Store::commit_migration" },
-    { file = "src/store/migrate.rs", symbol = "Store::plan" },
+    { file = "src/store/write/migrate.rs", symbol = "Current::add" },
+    { file = "src/store/write/migrate.rs", symbol = "Current::node" },
+    { file = "src/store/write/migrate.rs", symbol = "Store::commit_migration" },
+    { file = "src/store/write/migrate.rs", symbol = "Store::plan" },
     { file = "tests/integration/migrate.rs", symbol = "a_migration_stopped_between_its_removals_lands_on_the_next_command" },
 ]
 depends_on = [

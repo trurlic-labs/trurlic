@@ -13,9 +13,9 @@ tags = [
 status = "accepted"
 created = "2026-06-15T09:44:30.756424330Z"
 anchors = [
-    { file = "src/store/lock.rs", symbol = "Store::lock" },
-    { file = "src/store/lock.rs", symbol = "Store::lock_shared" },
-    { file = "src/store/lock.rs", symbol = "Store::open_lock_file" },
-    { file = "src/store/lock.rs", symbol = "StoreLock" },
-    { file = "src/store/lock.rs", symbol = "poll" },
+    { file = "src/store/write/lock.rs", symbol = "Store::lock" },
+    { file = "src/store/write/lock.rs", symbol = "Store::lock_shared" },
+    { file = "src/store/write/lock.rs", symbol = "Store::open_lock_file" },
+    { file = "src/store/write/lock.rs", symbol = "StoreLock" },
+    { file = "src/store/write/lock.rs", symbol = "poll" },
 ]

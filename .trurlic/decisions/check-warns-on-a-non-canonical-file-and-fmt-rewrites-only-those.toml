@@ -15,7 +15,7 @@ created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "src/commands/check.rs", symbol = "check" },
     { file = "src/commands/fmt.rs", symbol = "fmt" },
-    { file = "src/store/access.rs", symbol = "Writer::format" },
+    { file = "src/store/write/access.rs", symbol = "Writer::format" },
     { file = "tests/integration/canonical_form.rs", symbol = "a_hand_edited_non_canonical_file_loads_check_flags_it_and_fmt_fixes_it" },
     { file = "tests/integration/canonical_form.rs", symbol = "fmt_twice_changes_nothing" },
 ]

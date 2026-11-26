@@ -13,11 +13,11 @@ tags = [
 status = "proposed"
 created = "2026-11-24T01:00:00Z"
 anchors = [
-    { file = "src/store/commit.rs", symbol = "Store::prepare_write" },
     { file = "src/store/format/canonical.rs", symbol = "Canonical" },
     { file = "src/store/format/canonical.rs", symbol = "Compare" },
     { file = "src/store/format/canonical.rs", symbol = "canonical" },
     { file = "src/store/format/canonical.rs", symbol = "is_canonical" },
+    { file = "src/store/write/commit.rs", symbol = "Store::prepare_write" },
 ]
 depends_on = [
     "one-canonical-form-for-every-graph-file",

@@ -43,9 +43,9 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Text rules / write-only quality bar | `store/model/text.rs` / `store/quality/` |
 | Canonical serializer (the only one) | `store/format/canonical.rs` |
 | The one write: ops, cascades, undo | `store/apply/` |
-| Commit, journal, recovery | `store/commit.rs`, `journal.rs`, `recovery.rs` |
-| Shared-graph history | `store/history.rs`, `git/graph/` |
-| Format check / migration registry / carrying one out | `store/format/check.rs` / `store/format/migration/` / `store/migrate.rs` |
+| Commit, journal, recovery | `store/write/commit.rs`, `journal.rs`, `recovery.rs` |
+| Shared-graph history | `store/write/history.rs`, `git/graph/` |
+| Format check / migration registry / carrying one out | `store/format/check.rs` / `store/format/migration/` / `store/write/migrate.rs` |
 | Size and count limits | `store/model/limits.rs` |
 | Tool specs (schema = parser) | `tools/spec/` |
 | Refusal JSON, result fitting | `tools/result.rs`, `tools/truncate.rs` |
@@ -65,7 +65,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | C and C++ macros blanked before the parse: the per-file pass / the sets / the headers gathered and the passes cached | `code/language/c_family.rs` / `c_family/set.rs` / `sources/reads.rs`, `sources/lexical.rs` |
 | Span-hash units and hashing | `code/units.rs` |
 | Query contract / general resolver | `code/query.rs` / `code/general.rs` |
-| Failpoint sites | `store/failpoint.rs` |
+| Failpoint sites | `store/write/failpoint.rs` |
 
 ### Invariants
 

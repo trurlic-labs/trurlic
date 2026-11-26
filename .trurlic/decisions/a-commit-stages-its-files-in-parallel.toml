@@ -14,8 +14,8 @@ tags = [
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
-    { file = "src/store/durable.rs", symbol = "Store::temp_path" },
-    { file = "src/store/journal.rs", symbol = "Store::stage_commit" },
+    { file = "src/store/write/durable.rs", symbol = "Store::temp_path" },
+    { file = "src/store/write/journal.rs", symbol = "Store::stage_commit" },
 ]
 depends_on = [
     "atomic-writes-via-serialize-to-temp-verify-round-trip",

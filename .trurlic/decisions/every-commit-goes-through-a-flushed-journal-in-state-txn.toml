@@ -16,15 +16,15 @@ tags = [
 status = "accepted"
 created = "2026-10-02T12:18:34.628311449Z"
 anchors = [
-    { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
-    { file = "src/store/journal.rs", symbol = "Journal" },
-    { file = "src/store/journal.rs", symbol = "Replayed" },
-    { file = "src/store/journal.rs", symbol = "Store::apply_journal" },
-    { file = "src/store/journal.rs", symbol = "Store::finish" },
-    { file = "src/store/journal.rs", symbol = "Store::narrow" },
-    { file = "src/store/journal.rs", symbol = "Store::replace_journal" },
-    { file = "src/store/journal.rs", symbol = "Store::replay_journal" },
-    { file = "src/store/journal.rs", symbol = "Store::unapplied" },
+    { file = "src/store/write/commit.rs", symbol = "Store::commit_batch" },
+    { file = "src/store/write/journal.rs", symbol = "Journal" },
+    { file = "src/store/write/journal.rs", symbol = "Replayed" },
+    { file = "src/store/write/journal.rs", symbol = "Store::apply_journal" },
+    { file = "src/store/write/journal.rs", symbol = "Store::finish" },
+    { file = "src/store/write/journal.rs", symbol = "Store::narrow" },
+    { file = "src/store/write/journal.rs", symbol = "Store::replace_journal" },
+    { file = "src/store/write/journal.rs", symbol = "Store::replay_journal" },
+    { file = "src/store/write/journal.rs", symbol = "Store::unapplied" },
     { file = "tests/integration/failpoints.rs", symbol = "the_journal_deletion_is_flushed_before_the_write_returns" },
 ]
 depends_on = [

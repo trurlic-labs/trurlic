@@ -10,6 +10,6 @@ status = "accepted"
 created = "2026-11-23T22:27:34.236739142Z"
 anchors = [
     { file = "src/mcp/mod.rs", symbol = "call_tool" },
-    { file = "src/store/access.rs", symbol = "Store::load_state" },
-    { file = "src/store/access.rs", symbol = "Store::read" },
+    { file = "src/store/write/access.rs", symbol = "Store::load_state" },
+    { file = "src/store/write/access.rs", symbol = "Store::read" },
 ]

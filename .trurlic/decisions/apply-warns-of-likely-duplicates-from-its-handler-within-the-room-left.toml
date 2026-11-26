@@ -15,7 +15,7 @@ origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"
 anchors = [
     { file = "src/commands/apply.rs", symbol = "print" },
-    { file = "src/store/access.rs", symbol = "Writer::into_state" },
+    { file = "src/store/write/access.rs", symbol = "Writer::into_state" },
     { file = "src/tools/apply/duplicates.rs", symbol = "text_written" },
     { file = "src/tools/apply/duplicates.rs", symbol = "warned" },
     { file = "src/tools/apply/result.rs", symbol = "Answer" },

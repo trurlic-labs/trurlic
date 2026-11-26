@@ -16,10 +16,10 @@ tags = [
 status = "accepted"
 created = "2026-06-15T09:44:49.521491347Z"
 anchors = [
-    { file = "src/store/access.rs", symbol = "Writer::format" },
     { file = "src/store/apply/edit.rs", symbol = "Edit::first_introduced" },
     { file = "src/store/graph/validate.rs", symbol = "ProjectState::validate" },
     { file = "src/store/graph/validate.rs", symbol = "introduced" },
+    { file = "src/store/write/access.rs", symbol = "Writer::format" },
     { file = "tests/integration/invalid_graph.rs", symbol = "a_batch_that_adds_no_issue_lands_beside_the_issues" },
     { file = "tests/integration/invalid_graph.rs", symbol = "fmt_lands_beside_the_issues_and_keeps_them" },
 ]

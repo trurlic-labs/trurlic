@@ -14,5 +14,5 @@ status = "proposed"
 origin = "store lock released on drop while a forked child holds its descriptor"
 created = "2026-11-26T09:13:46.735825021Z"
 anchors = [
-    { file = "src/store/lock.rs", symbol = "Held" },
+    { file = "src/store/write/lock.rs", symbol = "Held" },
 ]

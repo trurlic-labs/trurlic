@@ -7,8 +7,9 @@ use std::path::Path;
 
 use crate::{Error, Result};
 
-use super::{COMPONENTS_DIR, DECISIONS_DIR, FORMAT_VERSION, STORE_DIR, Store};
+use crate::store::Store;
 use crate::store::model::Quality;
+use crate::store::model::{COMPONENTS_DIR, DECISIONS_DIR, FORMAT_VERSION, STORE_DIR};
 use crate::store::model::{Placement, Project};
 
 impl Store {

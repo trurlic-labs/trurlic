@@ -16,12 +16,12 @@ tags = [
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
-    { file = "src/store/access.rs", symbol = "Writer::commit" },
-    { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
-    { file = "src/store/create.rs", symbol = "Store::create" },
-    { file = "src/store/history.rs", symbol = "History" },
-    { file = "src/store/history.rs", symbol = "Store::commit_history" },
-    { file = "src/store/migrate.rs", symbol = "Store::commit_migration" },
+    { file = "src/store/write/access.rs", symbol = "Writer::commit" },
+    { file = "src/store/write/commit.rs", symbol = "Store::commit_batch" },
+    { file = "src/store/write/create.rs", symbol = "Store::create" },
+    { file = "src/store/write/history.rs", symbol = "History" },
+    { file = "src/store/write/history.rs", symbol = "Store::commit_history" },
+    { file = "src/store/write/migrate.rs", symbol = "Store::commit_migration" },
 ]
 depends_on = [
     "node-files-carry-no-history",

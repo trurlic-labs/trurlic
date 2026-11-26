@@ -16,8 +16,8 @@ created = "2026-11-24T12:00:00Z"
 anchors = [
     { file = "src/commands/check.rs", symbol = "check" },
     { file = "src/commands/status.rs", symbol = "print" },
-    { file = "src/store/history.rs", symbol = "HistoryFinding" },
-    { file = "src/store/history.rs", symbol = "Store::history_findings" },
+    { file = "src/store/write/history.rs", symbol = "HistoryFinding" },
+    { file = "src/store/write/history.rs", symbol = "Store::history_findings" },
     { file = "src/tools/status/mod.rs", symbol = "history_item" },
 ]
 depends_on = [

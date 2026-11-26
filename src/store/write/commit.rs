@@ -12,9 +12,10 @@ use crate::{Error, Result};
 use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
 use super::history::History;
-use super::{Store, StoreLock, StorePathFault};
+use super::lock::StoreLock;
 use crate::store::format::{Canonical, canonical};
 use crate::store::limits::MAX_NODE_FILE_BYTES;
+use crate::store::{Store, StorePathFault};
 
 /// A file write staged for batch commit.
 /// Created via [`Store::prepare_write`], executed via [`Store::commit_batch`].
@@ -52,7 +53,7 @@ impl Store {
     /// [`MAX_NODE_FILE_BYTES`] ([`Error::CanonicalTooLarge`]), as TOML of
     /// its type ([`Error::CanonicalUnreadable`]), and as the value written
     /// ([`Error::CanonicalDrift`]). Every write of a graph file passes here.
-    pub(super) fn prepare_write<T: Canonical + DeserializeOwned + PartialEq>(
+    pub(in crate::store) fn prepare_write<T: Canonical + DeserializeOwned + PartialEq>(
         &self,
         target: &Path,
         value: &T,
@@ -94,7 +95,7 @@ impl Store {
     /// renamed onto its target, the removed files go, and the history
     /// commit is made from the blobs. After the journal, a failure is
     /// [`Error::WritePending`]: the write lands at the next read or write.
-    pub(super) fn commit_batch(
+    pub(in crate::store) fn commit_batch(
         &self,
         lock: &StoreLock,
         writes: &[PendingWrite],

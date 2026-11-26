@@ -16,10 +16,13 @@ use crate::Result;
 
 use super::commit::PendingWrite;
 use super::failpoint::{self, Site};
-use super::history::{CommitMessage, History, Tool};
+use super::history::History;
 use super::journal::{PendingHistory, Replayed};
-use super::{ProjectState, Store, StoreLock};
+use super::lock::StoreLock;
+use super::message::{CommitMessage, Tool};
+use crate::store::Store;
 use crate::store::model::NodeFile;
+use crate::store::model::ProjectState;
 use crate::store::model::{Placement, Project};
 
 impl Store {
@@ -36,7 +39,7 @@ impl Store {
 
     /// `project.toml` as a read finds it: the graph's settings and its
     /// `[quality]`, none of its nodes.
-    pub(super) fn load_project(&self) -> Result<Project> {
+    pub(in crate::store) fn load_project(&self) -> Result<Project> {
         self.read(|project, _| Ok(project))
     }
 
@@ -101,9 +104,9 @@ impl Store {
 /// to the files on disk. Dropping the writer releases the lock.
 #[must_use = "dropping the writer releases the lock"]
 pub struct Writer<'s> {
-    pub(super) store: &'s Store,
+    pub(in crate::store) store: &'s Store,
     lock: StoreLock,
-    pub(super) state: ProjectState,
+    pub(in crate::store) state: ProjectState,
 }
 
 impl Writer<'_> {
@@ -151,7 +154,7 @@ impl Writer<'_> {
     /// the graph's repository with `message`, after one of any hand edit.
     /// The caller has applied the write to the state, which the commit
     /// leaves equal to the files on disk.
-    pub(super) fn commit(
+    pub(in crate::store) fn commit(
         &self,
         writes: &[PendingWrite],
         removes: &[PathBuf],

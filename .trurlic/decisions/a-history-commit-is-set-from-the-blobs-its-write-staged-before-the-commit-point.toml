@@ -17,11 +17,11 @@ anchors = [
     { file = "src/git/graph/index.rs", symbol = "Repository::set_index" },
     { file = "src/git/graph/index.rs", symbol = "Repository::write_blobs" },
     { file = "src/git/graph/mod.rs", symbol = "Repository::first_after" },
-    { file = "src/store/history.rs", symbol = "HistoryStep" },
-    { file = "src/store/history.rs", symbol = "Store::commit_history" },
-    { file = "src/store/history.rs", symbol = "Store::look_for_commit" },
-    { file = "src/store/history.rs", symbol = "Store::write_blobs" },
-    { file = "src/store/journal.rs", symbol = "a_history_commit_made_before_the_stop_is_not_made_again" },
+    { file = "src/store/write/history.rs", symbol = "HistoryStep" },
+    { file = "src/store/write/history.rs", symbol = "Store::commit_history" },
+    { file = "src/store/write/history.rs", symbol = "Store::look_for_commit" },
+    { file = "src/store/write/history.rs", symbol = "Store::write_blobs" },
+    { file = "src/store/write/journal.rs", symbol = "a_history_commit_made_before_the_stop_is_not_made_again" },
     { file = "tests/integration/history.rs", symbol = "a_stopped_write_is_committed_as_it_was_and_removes_no_file_twice" },
 ]
 depends_on = [

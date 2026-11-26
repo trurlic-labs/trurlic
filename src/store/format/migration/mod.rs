@@ -1,6 +1,6 @@
 //! The way from an older format to the current one, as data: the registry
 //! of steps and the tree of tables they rewrite. Carrying a migration out
-//! on a store is `store::migrate`'s.
+//! on a store is `store::write::migrate`'s.
 //!
 //! Every graph file is read as a TOML table into a [`Tree`]. The chain of
 //! steps of the registry (`steps.rs`) from the store's version rewrites the

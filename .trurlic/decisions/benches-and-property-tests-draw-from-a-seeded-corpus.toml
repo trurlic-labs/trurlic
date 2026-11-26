@@ -14,12 +14,12 @@ status = "proposed"
 created = "2026-10-03T13:55:20.745975078Z"
 anchors = [
     { file = "src/lib.rs", symbol = "bench" },
-    { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
     { file = "src/store/corpus/mod.rs", symbol = "Corpus" },
     { file = "src/store/corpus/mod.rs", symbol = "Corpus::write" },
     { file = "src/store/corpus/mod.rs", symbol = "RESTATED_EVERY" },
     { file = "src/store/corpus/mod.rs", symbol = "VOCABULARY_BANDS" },
     { file = "src/store/seeded.rs", symbol = "SplitMix64" },
+    { file = "src/store/write/commit.rs", symbol = "Store::commit_batch" },
     { file = "src/tools/truncate.rs" },
 ]
 

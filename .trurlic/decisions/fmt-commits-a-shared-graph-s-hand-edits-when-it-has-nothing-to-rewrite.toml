@@ -14,7 +14,7 @@ tags = [
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
-    { file = "src/store/access.rs", symbol = "Writer::format" },
+    { file = "src/store/write/access.rs", symbol = "Writer::format" },
 ]
 depends_on = [
     "a-shared-graph-s-write-commits-the-hand-edits-it-finds-first-as-hand-edit",

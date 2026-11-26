@@ -15,13 +15,13 @@ tags = [
 status = "proposed"
 created = "2026-11-24T12:00:00Z"
 anchors = [
-    { file = "src/store/history.rs", symbol = "CommitMessage" },
-    { file = "src/store/history.rs", symbol = "CommitMessage::new" },
-    { file = "src/store/history.rs", symbol = "CommitMessage::render" },
-    { file = "src/store/history.rs", symbol = "Tool" },
-    { file = "src/store/journal.rs", symbol = "Journal" },
     { file = "src/store/model/limits.rs", symbol = "MAX_TRAILER_BYTES" },
     { file = "src/store/model/text.rs", symbol = "TextField" },
+    { file = "src/store/write/journal.rs", symbol = "Journal" },
+    { file = "src/store/write/message.rs", symbol = "CommitMessage" },
+    { file = "src/store/write/message.rs", symbol = "CommitMessage::new" },
+    { file = "src/store/write/message.rs", symbol = "CommitMessage::render" },
+    { file = "src/store/write/message.rs", symbol = "Tool" },
 ]
 depends_on = [
     "a-shared-graph-is-a-git-repository-of-its-own-and-every-write-is-one-commit-there",

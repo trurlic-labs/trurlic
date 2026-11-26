@@ -17,13 +17,12 @@ use std::time::Duration;
 
 use crate::{Error, Result};
 
-use super::commit::PendingWrite;
-use super::history::{CommitMessage, History, Tool};
 use super::seeded::SplitMix64;
 use super::{Store, Timestamp};
 use crate::store::model::{
     AcceptedText, AcceptedVia, Anchor, Component, Decision, PROJECT_COMPONENT, Placement, Status,
 };
+use crate::store::write::{CommitMessage, History, PendingWrite, Tool};
 use words::{COMPONENT_WORDS, MODULE_WORDS, SYMBOL_WORDS, TAGS, WORDS};
 
 const DECISIONS_PER_COMPONENT: usize = 40;

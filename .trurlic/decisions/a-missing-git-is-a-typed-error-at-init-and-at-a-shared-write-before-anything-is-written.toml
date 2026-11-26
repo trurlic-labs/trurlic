@@ -15,8 +15,8 @@ status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::GitMissing" },
-    { file = "src/store/create.rs", symbol = "Store::create" },
-    { file = "src/store/create.rs", symbol = "Store::lay_out" },
+    { file = "src/store/write/create.rs", symbol = "Store::create" },
+    { file = "src/store/write/create.rs", symbol = "Store::lay_out" },
     { file = "tests/integration/history.rs", symbol = "a_missing_git_is_refused_at_init_and_at_a_write" },
 ]
 depends_on = [

@@ -16,9 +16,9 @@ tags = [
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
-    { file = "src/store/history.rs", symbol = "Head" },
-    { file = "src/store/history.rs", symbol = "Store::commit_history" },
-    { file = "src/store/history.rs", symbol = "Store::make_again" },
+    { file = "src/store/write/history.rs", symbol = "Head" },
+    { file = "src/store/write/history.rs", symbol = "Store::commit_history" },
+    { file = "src/store/write/history.rs", symbol = "Store::make_again" },
 ]
 depends_on = [
     "a-shared-graph-is-a-git-repository-of-its-own-and-every-write-is-one-commit-there",

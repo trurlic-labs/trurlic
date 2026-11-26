@@ -20,8 +20,10 @@ use crate::store::model::{Component, Decision, FORMAT_VERSION, FormatVersion, Pl
 use crate::{Error, Result};
 
 use super::commit::PendingWrite;
-use super::history::{CommitMessage, History, Tool};
-use super::{Store, StoreLock};
+use super::history::History;
+use super::lock::StoreLock;
+use super::message::{CommitMessage, Tool};
+use crate::store::Store;
 
 /// A planned migration: its report, and the commit that carries it out.
 #[must_use = "a planned migration is carried out by Store::commit_migration"]

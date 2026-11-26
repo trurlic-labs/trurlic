@@ -12,11 +12,11 @@ tags = [
 status = "accepted"
 created = "2026-06-15T09:44:23.486129858Z"
 anchors = [
-    { file = "src/store/commit.rs", symbol = "Store::prepare_write" },
-    { file = "src/store/commit.rs", symbol = "Store::write_atomic" },
-    { file = "src/store/durable.rs", symbol = "Store::stage" },
-    { file = "src/store/durable.rs", symbol = "Store::temp_path" },
-    { file = "src/store/durable.rs", symbol = "sync_dir" },
+    { file = "src/store/write/commit.rs", symbol = "Store::prepare_write" },
+    { file = "src/store/write/commit.rs", symbol = "Store::write_atomic" },
+    { file = "src/store/write/durable.rs", symbol = "Store::stage" },
+    { file = "src/store/write/durable.rs", symbol = "Store::temp_path" },
+    { file = "src/store/write/durable.rs", symbol = "sync_dir" },
 ]
 depends_on = [
     "canonical-rs-is-the-one-serializer-of-graph-files",

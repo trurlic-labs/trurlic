@@ -18,8 +18,8 @@ anchors = [
     { file = "src/store/format/load.rs", symbol = "an_entry_that_is_no_regular_file_is_refused_unopened" },
     { file = "src/store/format/load.rs", symbol = "ensure_regular" },
     { file = "src/store/format/load.rs", symbol = "read_node_bytes" },
-    { file = "src/store/journal.rs", symbol = "read_if_regular" },
-    { file = "src/store/lock.rs", symbol = "Store::open_lock_file" },
+    { file = "src/store/write/journal.rs", symbol = "read_if_regular" },
+    { file = "src/store/write/lock.rs", symbol = "Store::open_lock_file" },
 ]
 depends_on = [
     "a-load-fails-only-when-a-file-is-not-its-type",

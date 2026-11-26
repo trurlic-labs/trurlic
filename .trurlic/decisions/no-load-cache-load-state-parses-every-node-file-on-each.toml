@@ -13,5 +13,5 @@ status = "accepted"
 created = "2026-10-03T13:55:16.018750992Z"
 anchors = [
     { file = "benches/corpus.rs", symbol = "bench_load_state" },
-    { file = "src/store/access.rs", symbol = "Store::load_state" },
+    { file = "src/store/write/access.rs", symbol = "Store::load_state" },
 ]
