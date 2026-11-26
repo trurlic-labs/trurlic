@@ -1,24 +1,27 @@
 component = "code"
-choice = "The tree's blank set is the fixpoint over its headers' #defines; a file blanks the names of it that it writes, and its own #defines are judged with the headers' of the same names"
-reason = "A header's #define reaches every file that includes it, and which files do is a build fact, so a header's macros are the tree's; a source file's (.c, .cc, .cpp, .cxx) reaches no other file, so a flag one defines (curl's #define DONE) never erases an enumerator of that name elsewhere. With clang as the oracle on seven projects this scope lost no definition the tree-wide one found. The fixpoint is a least one over a worklist, so a cycle blanks nothing and its work is linear in the #defines, each body read up to MAX_MACRO_BODY_TOKENS tokens and a blanked call's arguments up to MAX_BLANK_ARGUMENT_BYTES. A name a file defines itself is judged by its own #defines and the headers' of that name together, so a file that redefines a header's attribute as a value blanks it nowhere in itself. A file of another worktree or of git's history is read against the calling tree's set, the only one known without walking that tree or that history, its own #defines judged with it; a set that changed since makes a symbol unparsable there, a missed repair, never a wrong one."
+choice = "A tree's blank sets are fixpoints over its headers' #defines, a test place's header reaching test code alone; a file blanks the names of its set it writes, its own #defines judged with them"
+reason = "A header's #define reaches every file that includes it, and which files do is a build fact the index does not read, so a header's macros are the tree's; a source file's (.c, .cc, .cpp, .cxx) reaches no other file, so a flag one defines (curl's #define DONE) never erases an enumerator of that name elsewhere. A header in a test place (tests/, test/, *_test.h) reaches test code alone: what a test's fake or stub defines, the code it tests never sees. Every other header reaches every file, a vendored library's among them, which is what this rule gives up; with clang as the oracle on six projects, redis's vendored deps among them, a rule scoped by includes changed no blank. The fixpoint is a least one over a worklist, so a cycle blanks nothing, and its work is linear in the #defines: each body is read up to MAX_MACRO_BODY_TOKENS tokens, and the #defines of one name are read into one summary that needs at most that many names, so a file's own #defines merge into the summaries of their names in work linear in its own, whatever the headers hold. A name a file defines itself is judged by its own #defines and the headers' of that name together, so a file that redefines a header's attribute as a value blanks it nowhere in itself. Every file a call reads, in the calling tree, another worktree or git's history, and a repair held again under the write lock, is judged against the calling tree's sets, made once by one function from its walk and headers; a set that changed since makes a symbol unparsable there, a missed repair, never a wrong one."
 alternatives = [
     "Every file's #defines tree-wide: rejected because a flag one source file defines erases that name in every other",
     "Never blank a name the tree also defines as an enumerator, variable, function, member or type: rejected because it lost hundreds of definitions on the seven projects, where a macro and a member often share a name",
+    "A header's #defines scoped to the translation units that include it, the whole set where an include is not in the tree: rejected because a generated header (config.h) puts most files of a real tree under the whole set, for an include graph read every call",
+    "A file's own include closure: rejected because a header used through the one that includes it (curl's easy.h, which curl.h includes after its CURL_EXTERN) then loses its blanks",
     "Another tree's own set for its files: rejected because it needs a walk of that tree for a few anchored files",
 ]
 tags = [
     "parsing",
     "reliability",
 ]
-status = "accepted"
+status = "proposed"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"
 anchors = [
-    { file = "src/code/language/c_family.rs", symbol = "MAX_BLANK_ARGUMENT_BYTES" },
     { file = "src/code/language/c_family.rs", symbol = "MAX_MACRO_BODY_TOKENS" },
     { file = "src/code/language/c_family.rs", symbol = "is_header" },
     { file = "src/code/language/c_family/set.rs", symbol = "BlankMacros::of" },
     { file = "src/code/language/c_family/set.rs", symbol = "BlankMacros::of_file" },
+    { file = "src/code/language/c_family/tests.rs", symbol = "a_files_own_defines_are_judged_in_work_its_own_bound" },
+    { file = "src/code/language/c_family/tests.rs", symbol = "a_header_in_a_test_place_reaches_test_code_alone" },
     { file = "src/code/language/c_family/tests.rs", symbol = "hostile_defines_are_read_in_linear_work" },
     { file = "src/sources/lexical.rs", symbol = "read_headers" },
     { file = "src/sources/tests.rs", symbol = "a_file_outside_the_walk_is_read_against_the_trees_macros" },
@@ -26,4 +29,13 @@ anchors = [
 ]
 depends_on = [
     "the-tree-s-own-attribute-and-namespace-macros-are-blanked-before-a-c-or-c-plus-plus-parse",
+]
+
+[accepted_text]
+choice = "The tree's blank set is the fixpoint over its headers' #defines; a file blanks the names of it that it writes, and its own #defines are judged with the headers' of the same names"
+reason = "A header's #define reaches every file that includes it, and which files do is a build fact, so a header's macros are the tree's; a source file's (.c, .cc, .cpp, .cxx) reaches no other file, so a flag one defines (curl's #define DONE) never erases an enumerator of that name elsewhere. With clang as the oracle on seven projects this scope lost no definition the tree-wide one found. The fixpoint is a least one over a worklist, so a cycle blanks nothing and its work is linear in the #defines, each body read up to MAX_MACRO_BODY_TOKENS tokens and a blanked call's arguments up to MAX_BLANK_ARGUMENT_BYTES. A name a file defines itself is judged by its own #defines and the headers' of that name together, so a file that redefines a header's attribute as a value blanks it nowhere in itself. A file of another worktree or of git's history is read against the calling tree's set, the only one known without walking that tree or that history, its own #defines judged with it; a set that changed since makes a symbol unparsable there, a missed repair, never a wrong one."
+alternatives = [
+    "Every file's #defines tree-wide: rejected because a flag one source file defines erases that name in every other",
+    "Never blank a name the tree also defines as an enumerator, variable, function, member or type: rejected because it lost hundreds of definitions on the seven projects, where a macro and a member often share a name",
+    "Another tree's own set for its files: rejected because it needs a walk of that tree for a few anchored files",
 ]

@@ -1,6 +1,6 @@
 component = "code"
 choice = "A language beyond Rust is read by the general resolver from a grammar compiled into the binary and a query file; its only code is a check or a same-length rewrite before the parse"
-reason = "A language added as a Rust module of its own repeats the walk, the scopes, the budgets and the hash for its grammar, and each copy drifts from the others. One engine reads any grammar's tree by a query file kept beside the code, so a language is a grammar crate, a query file, a row of language.rs and of FileKind, and a fixture corpus. A grammar is compiled into the binary: one loaded at run time is a dynamic library, which needs unsafe, a WebAssembly runtime, which is a heavy dependency for every user, or a helper process, too slow for a hook; and each would make what a call returns depend on what is installed. Rust keeps its own module, because its attributes, impls, re-exports and module files need code. Since no query runs before the parse, the only code a language may add runs there: a check of its bytes its grammar's scanner forces, such as Python's bound on indentation widths, or a rewrite of the bytes that keeps every offset, such as C's and C++'s blanking of the macros their tree defines as attributes (language/c_family.rs)."
+reason = "A language added as a Rust module of its own repeats the walk, the scopes, the budgets and the hash for its grammar, and each copy drifts from the others. One engine reads any grammar's tree by a query file kept beside the code, so a language is a grammar crate, a query file, a row of language.rs and of FileKind, and a fixture corpus. A grammar is compiled into the binary: one loaded at run time is a dynamic library, which needs unsafe, a WebAssembly runtime, which is a heavy dependency for every user, or a helper process, too slow for a hook; and each would make what a call returns depend on what is installed. Rust keeps its own module, because its attributes, impls, re-exports and module files need code. Since no query runs before the parse, the only code a language may add runs there: a check of its bytes its grammar's scanner forces, such as Python's bound on indentation widths, or a rewrite of the bytes that keeps every offset, such as C's and C++'s blanking of the macros their tree defines as attributes (language/c_family.rs), which hands the engine, beside the text, the places it made private, as data the engine reads for any language."
 alternatives = [
     "A Rust module per language: rejected because each repeats the walk, the scopes and the hash, and drifts from the others",
     "Grammars loaded at run time: rejected because loading one needs unsafe, a WebAssembly runtime or a helper process, and the index would depend on what is installed",
@@ -10,7 +10,7 @@ tags = [
     "dependencies",
     "parsing",
 ]
-status = "accepted"
+status = "proposed"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
@@ -19,4 +19,13 @@ anchors = [
     { file = "src/code/language.rs", symbol = "Language" },
     { file = "src/code/language.rs", symbol = "PYTHON" },
     { file = "src/code/language/python.scm" },
+]
+
+[accepted_text]
+choice = "A language beyond Rust is read by the general resolver from a grammar compiled into the binary and a query file; its only code is a check or a same-length rewrite before the parse"
+reason = "A language added as a Rust module of its own repeats the walk, the scopes, the budgets and the hash for its grammar, and each copy drifts from the others. One engine reads any grammar's tree by a query file kept beside the code, so a language is a grammar crate, a query file, a row of language.rs and of FileKind, and a fixture corpus. A grammar is compiled into the binary: one loaded at run time is a dynamic library, which needs unsafe, a WebAssembly runtime, which is a heavy dependency for every user, or a helper process, too slow for a hook; and each would make what a call returns depend on what is installed. Rust keeps its own module, because its attributes, impls, re-exports and module files need code. Since no query runs before the parse, the only code a language may add runs there: a check of its bytes its grammar's scanner forces, such as Python's bound on indentation widths, or a rewrite of the bytes that keeps every offset, such as C's and C++'s blanking of the macros their tree defines as attributes (language/c_family.rs)."
+alternatives = [
+    "A Rust module per language: rejected because each repeats the walk, the scopes and the hash, and drifts from the others",
+    "Grammars loaded at run time: rejected because loading one needs unsafe, a WebAssembly runtime or a helper process, and the index would depend on what is installed",
+    "The grammars' own tags.scm queries: rejected because they state no kind, visibility, test role or span growth the index carries",
 ]

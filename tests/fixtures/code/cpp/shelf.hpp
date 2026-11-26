@@ -78,7 +78,9 @@ inline auto by_pages = [](const Book& a, const Book& b) { return a.pages() < b.p
 namespace edition { inline namespace v2 { int number(); } }
 
 int (*pick(int which))(int);
+int (*(*pick_pick(int which))(int))(int);
 int (larger)(int a, int b);
+void (reset) (Cursor *c);
 
 class Reader {
  public:

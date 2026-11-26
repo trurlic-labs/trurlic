@@ -56,7 +56,7 @@ fn outcome(resolution: &Resolution) -> String {
 /// takes and what is at each of `anchored`, the cache filled as a call
 /// fills it.
 fn gather<'a>(store: &Store, anchored: impl Iterator<Item = &'a str>) -> CodeFacts {
-    let mut reads = Reads::new();
+    let mut reads = Reads::of_tree(store);
     let (entries, walked) = read_tree(store, store.code_root(), Scope::Tree, anchored, &mut reads);
     reads.write(store);
     CodeFacts::new(entries, walked)
@@ -700,7 +700,7 @@ fn a_read_of_another_tree_prunes_no_entry_of_the_calling_tree() {
         fs::write(dir.join(SymbolsKey::new(key).to_string()), b"").unwrap();
     }
 
-    let mut reads = Reads::new();
+    let mut reads = Reads::of_tree(&store);
     let here = RUST_CASES.iter().map(|(file, _, _)| *file);
     read_tree(&store, store.code_root(), Scope::Tree, here, &mut reads);
     let there = BTreeSet::from(["lib.rs".to_owned()]);
@@ -801,6 +801,7 @@ const STATEMENTS: &[&str] = &[
     "Makefile twice Target Code -",
     "c/shelf.c SHELF_DONE Macro Code -",
     "c/shelf.c SWAP Macro Code -",
+    "c/shelf.c ROOM Macro Code -",
     "c/shelf.c shelf_opened Variable Code Public",
     "c/shelf.c verbose Variable Code Private",
     "c/shelf.c sort_books Function Code Private",
@@ -810,9 +811,11 @@ const STATEMENTS: &[&str] = &[
     "c/shelf.c shelf_close Function Code Public",
     "c/shelf.c sort_books Function Code Private",
     "c/shelf.c shelf_scan Function Code Private",
+    "c/shelf.c shelf_rank Function Code Private",
     "c/shelf.c weigh Function Code Private",
     "c/shelf.c weigh Function Code Private",
     "c/shelf.c pick Function Code Public",
+    "c/shelf.c shelf_pick_pick Function Code Public",
     "c/shelf.c legacy Function Code Public",
     "c/shelf.c shelf_log Function Code Public",
     "c/shelf.c shelf_outside Function Code Public",
@@ -821,7 +824,9 @@ const STATEMENTS: &[&str] = &[
     "c/shelf.h SHELF_API Macro Code -",
     "c/shelf.h SHELF_PRINTF Macro Code -",
     "c/shelf.h SHELF_STATIC Macro Code -",
+    "c/shelf.h SI Macro Code -",
     "c/shelf.h SHELF_STATIC Macro Code -",
+    "c/shelf.h SI Macro Code -",
     "c/shelf.h SHELF_FLAG Macro Code -",
     "c/shelf.h SHELF_CAPACITY Macro Code -",
     "c/shelf.h SHELF_HALF Macro Code -",
@@ -850,6 +855,8 @@ const STATEMENTS: &[&str] = &[
     "c/shelf.h shelf_log Function Code Public",
     "c/shelf.h shelf_on_close Function Code Public",
     "c/shelf.h shelf_max Function Code Public",
+    "c/shelf.h shelf_pick_pick Function Code Public",
+    "c/shelf.h shelf_reset Function Code Public",
     "c/shelf.h shelf_title Function Code Public",
     "c/shelf.h shelf_opened Variable Code Public",
     "c/tests/shelf_check.c check_open Function Test Private",
@@ -928,7 +935,9 @@ const STATEMENTS: &[&str] = &[
     "cpp/shelf.hpp shelf::model::edition::v2 Module Code Public",
     "cpp/shelf.hpp shelf::model::edition::v2::number Function Code Public",
     "cpp/shelf.hpp shelf::model::pick Function Code Public",
+    "cpp/shelf.hpp shelf::model::pick_pick Function Code Public",
     "cpp/shelf.hpp shelf::model::larger Function Code Public",
+    "cpp/shelf.hpp shelf::model::reset Function Code Public",
     "cpp/shelf.hpp shelf::model::Reader Class Code Public",
     "cpp/shelf.hpp shelf::model::Reader::Reader Method Code Public",
     "cpp/shelf.hpp shelf::model::Reader::raw Field Code Private",
@@ -1323,17 +1332,21 @@ fn tree_of(files: &[(&str, &str)]) -> (TempDir, Store) {
 fn a_headers_define_blanks_every_file_and_a_source_files_that_file_alone() {
     let (_tmp, store) = tree_of(&[
         ("include/api.h", "#define API\n"),
+        ("tests/fake.h", "#define PORT\n"),
         ("lib/ftp.h", "typedef enum { PORT, DONE } ftpport;\n"),
         ("lib/ftp.c", "API int ftp(void);\n"),
         (
             "lib/tool.c",
             "#define DONE\n#define LOCAL\nLOCAL int tool(void);\n",
         ),
+        ("tests/check.c", "PORT int check(void);\n"),
     ]);
     let cases = [
+        ("lib/ftp.h", "ftpport::PORT", SYMBOL),
         ("lib/ftp.h", "ftpport::DONE", SYMBOL),
         ("lib/ftp.c", "ftp", SYMBOL),
         ("lib/tool.c", "tool", SYMBOL),
+        ("tests/check.c", "check", SYMBOL),
     ];
 
     assert_eq!(resolve_all(&store, &cases), expected(&cases));
@@ -1362,4 +1375,152 @@ fn a_define_added_to_a_header_indexes_anew_only_the_files_that_write_its_name() 
 
     // The header's index and lexical pass, and the index of `src/uses.c`.
     assert_eq!(added, 3);
+}
+
+#[test]
+fn a_repair_held_again_under_the_lock_reads_its_file_as_the_tree_read_does() {
+    let (_tmp, store) = tree_of(&[
+        (
+            "include/api.h",
+            "#define API __attribute__((visibility(\"default\")))\n",
+        ),
+        (
+            "src/book.cc",
+            "class API Book {\n public:\n  int pages;\n};\n",
+        ),
+    ]);
+    let (stale, repair) = (
+        anchor("src/book.cc", "Book::leaves"),
+        anchor("src/book.cc", "Book::pages"),
+    );
+    let mut repairs = BTreeMap::from([(stale, repair)]);
+
+    let dropped = still_holding(&store, &mut repairs);
+
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert_eq!(repairs.len(), 1);
+}
+
+/// What a warm call adds to the cache after `edits` to the tree of
+/// `files` (a text of `None` removes its file), and whether its facts then
+/// match a cold call's.
+fn after_edit(files: &[(&str, &str)], edits: &[(&str, Option<&str>)]) -> (usize, bool) {
+    let (tmp, store) = tree_of(files);
+    gather(&store, std::iter::empty());
+    let before = entries(&store);
+    for (path, text) in edits {
+        let path = tmp.path().join(path);
+        match text {
+            Some(text) => {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, text).unwrap();
+            }
+            None => fs::remove_file(path).unwrap(),
+        }
+    }
+    let warm = statements(&gather(&store, std::iter::empty()));
+    let added = entries(&store).difference(&before).count();
+    fs::remove_dir_all(store.root().join(".state/symbols")).unwrap();
+    let cold = statements(&gather(&store, std::iter::empty()));
+    (added, warm == cold)
+}
+
+/// A header edit: its name, the tree before, the edits, and the cache
+/// entries a warm call adds after them.
+type HeaderEdit<'a> = (
+    &'a str,
+    &'a [(&'a str, &'a str)],
+    &'a [(&'a str, Option<&'a str>)],
+    usize,
+);
+
+#[test]
+fn an_edit_of_a_header_indexes_anew_exactly_the_files_whose_index_it_changes() {
+    let api = ("inc/api.h", "#define API\n");
+    let a = ("src/a.cc", "class API A { int x; };\n");
+    let b = ("src/b.cc", "int b();\n");
+    // Each changed file's index and lexical pass, and the index of each
+    // file whose blank set the edit changes.
+    let edits: [HeaderEdit<'_>; 9] = [
+        (
+            "an attribute made a value",
+            &[api, a, b],
+            &[("inc/api.h", Some("#define API 1\n"))],
+            3,
+        ),
+        (
+            "a name made no attribute through another header",
+            &[
+                ("inc/api.h", "#define API EXPORT\n"),
+                ("inc/exp.h", "#define EXPORT\n"),
+                a,
+                ("src/c.cc", "class EXPORT C { int y; };\n"),
+                b,
+            ],
+            &[("inc/exp.h", Some("#define EXPORT 1\n"))],
+            4,
+        ),
+        (
+            "a static macro emptied",
+            &[
+                ("inc/m.h", "#define PRIVATE_FN static\n"),
+                ("src/a.c", "PRIVATE_FN int f(void) { return 0; }\n"),
+            ],
+            &[("inc/m.h", Some("#define PRIVATE_FN\n"))],
+            3,
+        ),
+        (
+            "a namespace opening added",
+            &[
+                ("inc/ns.h", "#define END }\n"),
+                ("src/a.cc", "namespace x {\nint f();\nEND\n"),
+            ],
+            &[(
+                "inc/ns.h",
+                Some("#define END }\n#define BEGIN namespace x {\n"),
+            )],
+            3,
+        ),
+        (
+            "a header name a source file defines itself",
+            &[
+                ("inc/m.h", "#define FLAG\n"),
+                (
+                    "src/a.c",
+                    "#define FLAG static\nFLAG int f(void) { return 0; }\n",
+                ),
+                ("src/b.c", "FLAG int g(void);\n"),
+            ],
+            &[("inc/m.h", Some("#define FLAG 1\n"))],
+            4,
+        ),
+        (
+            "an unrelated header",
+            &[api, ("inc/other.h", "#define OTHER\n"), a, b],
+            &[("inc/other.h", Some("#define OTHER\n#define MORE\n"))],
+            2,
+        ),
+        ("a header emptied", &[api, a], &[("inc/api.h", Some(""))], 3),
+        (
+            "an include added",
+            &[api, ("inc/b.h", "int b2();\n"), a, b],
+            &[("src/b.cc", Some("#include \"../inc/b.h\"\nint b();\n"))],
+            2,
+        ),
+        (
+            "a header moved into a test place",
+            &[
+                ("inc/fake.h", "#define DONE\n"),
+                ("src/a.c", "enum { DONE };\n"),
+            ],
+            &[
+                ("inc/fake.h", None),
+                ("tests/fake.h", Some("#define DONE\n")),
+            ],
+            1,
+        ),
+    ];
+    for (name, files, edit, want) in edits {
+        assert_eq!(after_edit(files, edit), (want, true), "{name}");
+    }
 }

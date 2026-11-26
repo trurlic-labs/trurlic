@@ -10,6 +10,8 @@
                      kept */ \
     (a) = (b); (b) = t; \
   } while (0)
+#define ROOM(n) ((n) + \
+    /* a comment a token follows */ 1)
 
 unsigned shelf_opened = 0;
 static int verbose;
@@ -32,6 +34,7 @@ static int sort_books(shelf *s)
 }
 
 SHELF_STATIC int shelf_scan(shelf *s) { return (int)s->count; }
+SI int shelf_rank(shelf *s) { return (int)s->count; }
 
 #if defined(_WIN32)
 static long weigh(shelf *s) { return (long)s->count; }
@@ -40,6 +43,7 @@ static long weigh(shelf *s) { return (long)s->count * 2; }
 #endif
 
 int (*pick(int which))(const book *, const book *) { (void)which; return 0; }
+int (*(*shelf_pick_pick(int which))(int))(int) { (void)which; return 0; }
 
 int legacy(a, b)
   int a;

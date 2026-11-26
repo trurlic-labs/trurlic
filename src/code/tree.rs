@@ -28,13 +28,13 @@ pub(super) struct TreeIndex<'t> {
 }
 
 impl<'t> TreeIndex<'t> {
-    /// The builder of `text`'s index, whose tree's units are `leaves`,
-    /// over `scopes`, the scopes entered so far.
-    pub(super) fn new(text: &'t str, leaves: Leaves, scopes: ScopeTree) -> Self {
+    /// The builder of `text`'s index, whose lines are `lines` and whose
+    /// tree's units are `leaves`, over `scopes`, the scopes entered so far.
+    pub(super) fn new(text: &'t str, lines: Lines, leaves: Leaves, scopes: ScopeTree) -> Self {
         Self {
             text,
             leaves,
-            lines: Lines::of(text.as_bytes()),
+            lines,
             scopes,
             index: FileIndex::default(),
             ranges: Vec::new(),

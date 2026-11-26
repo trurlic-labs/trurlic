@@ -7,6 +7,7 @@
 use std::fmt;
 use std::sync::LazyLock;
 
+use super::general::{self, Source};
 use super::kinds::{DefinitionKind, Role, Visibility};
 use super::language::c_family::{self, FileMacros};
 use super::language::python;
@@ -14,12 +15,12 @@ use super::language::{C, CPP, Language, PYTHON, TSX, TYPESCRIPT};
 use super::scope::{MAX_NESTING, Scope, ScopeId, ScopeTree};
 use super::span::{Span, SpanHash};
 use super::symbol::{Segment, Syntax};
-use super::{encoding, general, json, make, markdown, rust, syntax, toml, work};
+use super::{encoding, json, make, markdown, rust, syntax, toml, work};
 
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 18;
+pub(crate) const INDEX_FORMAT: u32 = 19;
 
 /// The largest file a tree-sitter grammar indexes. A parse is bounded in
 /// work and memory per byte of its file (`work.rs`), so this bounds what
@@ -351,13 +352,14 @@ pub(crate) fn index(
         at: e.valid_up_to(),
     })?;
     let scopes = ScopeTree::for_file(kind, bytes.len());
+    let plain = Source::plain(text);
     let mut index = match kind {
         FileKind::Rust => rust::index(text, scopes)?,
-        FileKind::Python => general::index(&PYTHON, text, scopes)?,
-        FileKind::TypeScript => general::index(&TYPESCRIPT, text, scopes)?,
-        FileKind::Tsx => general::index(&TSX, text, scopes)?,
-        FileKind::C => general::index(&C, &c_family::blank(text, macros), scopes)?,
-        FileKind::Cpp => general::index(&CPP, &c_family::blank(text, macros), scopes)?,
+        FileKind::Python => general::index(&PYTHON, &plain, scopes)?,
+        FileKind::TypeScript => general::index(&TYPESCRIPT, &plain, scopes)?,
+        FileKind::Tsx => general::index(&TSX, &plain, scopes)?,
+        FileKind::C => c_family::index(&C, text, macros, scopes)?,
+        FileKind::Cpp => c_family::index(&CPP, text, macros, scopes)?,
         FileKind::Toml => toml::index(text, scopes)?,
         FileKind::Json => json::index(text, scopes)?,
         FileKind::Make => make::index(text, scopes)?,
@@ -409,7 +411,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 18] = [
+    const FINGERPRINTS: [(u32, &str); 19] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -482,6 +484,10 @@ mod tests {
             18,
             "1d7cc98fddd899e12c155f6d26dbadba9f0cbaefc3533938af62f45f153f708e",
         ),
+        (
+            19,
+            "1b33aab31dac314239cb8c62360a4d11c14abd3b262e10fa8f919600611df05a",
+        ),
     ];
 
     #[test]
@@ -499,25 +505,30 @@ mod tests {
             }
         }
         files.sort();
-        let kinds: Vec<(&std::path::PathBuf, FileKind)> = files
+        let kinds: Vec<(&std::path::PathBuf, &str, FileKind)> = files
             .iter()
             .filter_map(|path| {
-                let name = path.to_str().unwrap().trim_end_matches(".fixture");
-                Some((path, FileKind::of(name)?))
+                let relative = path.strip_prefix(&root).ok()?.to_str()?;
+                let name = relative.trim_end_matches(".fixture");
+                Some((path, name, FileKind::of(name)?))
             })
             .collect();
-        let headers: Vec<c_family::Defines> = kinds
+        let headers: Vec<(&str, c_family::Defines)> = kinds
             .iter()
-            .filter(|(path, kind)| {
-                kind.blanks_macros() && c_family::is_header(path.to_str().unwrap())
+            .filter(|(_, name, kind)| kind.blanks_macros() && c_family::is_header(name))
+            .map(|(path, name, _)| {
+                (
+                    *name,
+                    c_family::lexed(&std::fs::read(path).unwrap()).into_defines(),
+                )
             })
-            .map(|(path, _)| c_family::lexed(&std::fs::read(path).unwrap()).into_defines())
             .collect();
-        let tree = c_family::BlankMacros::of(&headers);
+        let tree =
+            c_family::BlankMacros::of(headers.iter().map(|(name, defines)| (*name, defines)));
         let mut hasher = blake3::Hasher::new();
-        for (path, kind) in kinds {
-            let indexed =
-                crate::code::testing::index_in(kind, &std::fs::read(path).unwrap(), &tree);
+        for (path, name, kind) in kinds {
+            let bytes = std::fs::read(path).unwrap();
+            let indexed = crate::code::testing::index_in(name, kind, &bytes, &tree);
             hasher.update(&crate::code::encoding::encode(&indexed));
         }
         let fingerprint = hasher.finalize().to_hex().to_string();

@@ -1,43 +1,143 @@
-//! The names a C or C++ file blanks. The tree's set is the fixpoint over
-//! its headers' `#define`s ([`BlankMacros::of`]); a file blanks the part
-//! of it that it writes, and its own `#define`s are judged with the
-//! headers' of the same names ([`BlankMacros::of_file`]), so a flag a
-//! source file defines blanks nothing in another file.
+//! The names a C or C++ file blanks. A header's `#define`s reach every
+//! file of the tree but one in a test place's: those reach only test
+//! code, since what a test's fake or stub defines the code it tests never
+//! sees. So a tree has two sets, each the fixpoint over the `#define`s that
+//! reach its files ([`BlankMacros::of`]); a file blanks the part of its
+//! set that it writes, and its own `#define`s are judged with the headers'
+//! of the same names ([`BlankMacros::of_file`]), so a flag a source file
+//! defines blanks nothing in another file.
 //!
 //! A name is blankable when every `#define` of it is empty or only
 //! specifiers, attribute forms and other blankable names, a function-like
 //! one with at least one such body not empty (an empty one alone is a
 //! function's stand-in in another arm); or when every `#define` of it is
 //! only `namespace x {` openings or only closing braces, and the tree
-//! defines such an opening.
+//! defines such an opening. The `#define`s of one name are read as one
+//! [`Summary`], which a file's own of that name merge into, so a file's
+//! judgement is linear in its own `#define`s, whatever the headers hold.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Body, Define, Defines, Lexed, STATIC};
+use super::{Body, Define, Defines, Lexed, MAX_MACRO_BODY_TOKENS};
+use crate::code::index::FileKind;
 
-/// Each name's `#define`s: whether function-like, and the body.
-type Bodies = BTreeMap<String, Vec<(bool, Body)>>;
+/// What the `#define`s of one name are, read together: their forms, the
+/// shapes of their bodies, and the names their attribute bodies need
+/// blankable, each with its form (`true` for called with arguments). The
+/// names past [`MAX_MACRO_BODY_TOKENS`] make the name no attribute, as a
+/// body past it does.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Summary {
+    object: bool,
+    function: bool,
+    /// One body no rule blanks, or names needed past the bound.
+    code: bool,
+    opens: bool,
+    closes: bool,
+    /// One attribute body not empty.
+    written: bool,
+    /// One body not empty without `static`, and one with it.
+    plain: bool,
+    statics: bool,
+    wants: BTreeSet<(String, bool)>,
+}
+
+impl Summary {
+    /// Read `define` into it, in work linear in its body's names.
+    fn add(&mut self, define: &Define) {
+        self.object |= !define.function_like;
+        self.function |= define.function_like;
+        match &define.body {
+            Body::Code => self.code = true,
+            Body::Opens => self.opens = true,
+            Body::Closes => self.closes = true,
+            Body::Attribute {
+                names,
+                calls,
+                empty,
+                holds_static,
+            } => {
+                self.written |= !empty;
+                self.plain |= !empty && !holds_static;
+                self.statics |= *holds_static;
+                let needed = names.iter().map(|name| (name, false));
+                for (name, called) in needed.chain(calls.iter().map(|name| (name, true))) {
+                    if self.code {
+                        break;
+                    }
+                    // The summary outlives the lexical passes it is read from.
+                    // clone: so it owns its names.
+                    self.wants.insert((name.clone(), called));
+                    if self.wants.len() > MAX_MACRO_BODY_TOKENS {
+                        self.code = true;
+                        self.wants.clear();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether its every body is an attribute.
+    const fn attribute(&self) -> bool {
+        !(self.code || self.opens || self.closes)
+    }
+
+    /// Its form when it may be blanked as an attribute (`true` for
+    /// function-like): one form, and a function-like one written.
+    const fn candidate(&self) -> Option<bool> {
+        let one_form = self.object != self.function;
+        match self.attribute() && one_form && (self.object || self.written) {
+            true => Some(self.function),
+            false => None,
+        }
+    }
+
+    /// Whether every body is object-like and an opening (`opening`) or a
+    /// closing, or empty, one at least of that shape.
+    const fn shaped(&self, opening: bool) -> bool {
+        let (wanted, other) = match opening {
+            true => (self.opens, self.closes),
+            false => (self.closes, self.opens),
+        };
+        wanted && !other && self.object && !self.function && !self.code && !self.written
+    }
+
+    /// Whether every body but an empty one holds `static`, one at least.
+    const fn holds_static(&self) -> bool {
+        self.attribute() && self.statics && !self.plain
+    }
+}
+
+/// Each name's [`Summary`].
+type Summaries = BTreeMap<String, Summary>;
 
 /// What a group of `#define`s blanks: the names written alone, those of
-/// them written `static`, and those called with arguments.
+/// them that make what follows private, and those called with arguments.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Settled {
     names: BTreeSet<String>,
     statics: BTreeSet<String>,
     calls: BTreeSet<String>,
-    /// The steps its fixpoint took, which its inputs bound.
+    /// The steps its judgement took, which its inputs bound.
     steps: usize,
 }
 
-/// The tree's blank set: the `#define`s of its headers, by name, and what
-/// they blank.
+/// The set of the files one group of headers reaches: the summaries of
+/// their `#define`s, what they blank, and whether one opens a namespace,
+/// which makes a closing brace blankable.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Reach {
+    summaries: Summaries,
+    settled: Settled,
+    opens: bool,
+}
+
+/// The tree's blank sets: of its code, which the headers outside test
+/// places reach, and of its test code, which every header reaches.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct BlankMacros {
-    bodies: Bodies,
-    settled: Settled,
-    /// Whether a header defines a namespace's opening, which makes a
-    /// closing brace blankable.
-    opens: bool,
+    code: Reach,
+    tests: Reach,
 }
 
 /// The names one C or C++ file blanks, and their identity, in its cache
@@ -51,26 +151,41 @@ pub(crate) struct FileMacros {
 }
 
 impl BlankMacros {
-    /// The set of a tree whose headers' `#define`s are `headers`, in work
-    /// linear in them.
-    pub(crate) fn of<'d>(headers: impl IntoIterator<Item = &'d Defines>) -> Self {
-        let bodies = bodies_of(headers.into_iter().flat_map(|defines| &defines.0));
-        let opens = bodies
-            .values()
-            .flatten()
-            .any(|(_, body)| *body == Body::Opens);
-        let settled = settle(&bodies, |_, _| false, opens);
+    /// The sets of a tree whose headers are `headers`, each its path and
+    /// its `#define`s, in work linear in them.
+    pub(crate) fn of<'d>(headers: impl IntoIterator<Item = (&'d str, &'d Defines)>) -> Self {
+        let (mut code, mut tests) = (Summaries::new(), Summaries::new());
+        for (path, defines) in headers {
+            let test = is_test_code(path);
+            for define in &defines.0 {
+                // clone: each map owns its names apart from the passes.
+                tests.entry(define.name.clone()).or_default().add(define);
+                if !test {
+                    // clone: and apart from the other map.
+                    code.entry(define.name.clone()).or_default().add(define);
+                }
+            }
+        }
         Self {
-            bodies,
-            settled,
-            opens,
+            code: Reach::of(code),
+            tests: Reach::of(tests),
         }
     }
 
-    /// What the file `lexed` describes blanks: each name it writes that
-    /// the tree blanks, but those it defines itself, which are judged by
-    /// its `#define`s and the headers' of the same names together.
-    pub(crate) fn of_file(&self, lexed: &Lexed) -> FileMacros {
+    /// What the file at `path` that `lexed` describes blanks: each name it
+    /// writes that its set blanks, but those it defines itself, which are
+    /// judged by its `#define`s and the headers' of the same names
+    /// together.
+    pub(crate) fn of_file(&self, path: &str, lexed: &Lexed) -> FileMacros {
+        self.judged(path, lexed).0
+    }
+
+    /// [`Self::of_file`], and the steps the file's own `#define`s took.
+    fn judged(&self, path: &str, lexed: &Lexed) -> (FileMacros, usize) {
+        let reach = match is_test_code(path) {
+            true => &self.tests,
+            false => &self.code,
+        };
         let own: BTreeSet<&str> = lexed
             .defines
             .0
@@ -79,13 +194,13 @@ impl BlankMacros {
             .collect();
         let local = match own.is_empty() {
             true => Settled::default(),
-            false => self.local(&lexed.defines, &own),
+            false => reach.local(&lexed.defines, &own),
         };
         let mut file = FileMacros::default();
         for name in lexed.spelled() {
             let from = match own.contains(name) {
                 true => &local,
-                false => &self.settled,
+                false => &reach.settled,
             };
             for (set, into) in [
                 (&from.names, &mut file.names),
@@ -98,18 +213,39 @@ impl BlankMacros {
             }
         }
         file.identity = identity(&file);
-        file
+        (file, local.steps)
+    }
+}
+
+impl Reach {
+    fn of(summaries: Summaries) -> Self {
+        let opens = summaries.values().any(|summary| summary.opens);
+        let settled = settle(&summaries, |_, _| false, opens);
+        Self {
+            summaries,
+            settled,
+            opens,
+        }
     }
 
-    /// What `defines`, a file's own, blank, judged with the headers'
-    /// `#define`s of their names; a name `own` holds is never taken as
-    /// settled from the tree.
+    /// What `defines`, a file's own, blank, each name's summary merged
+    /// into the headers' of it; a name `own` holds is never taken as
+    /// settled from the headers.
     fn local(&self, defines: &Defines, own: &BTreeSet<&str>) -> Settled {
-        let mut bodies = bodies_of(&defines.0);
-        for (name, list) in &mut bodies {
-            if let Some(tree) = self.bodies.get(name) {
-                list.extend(tree.iter().cloned());
-            }
+        let mut summaries = Summaries::new();
+        let mut steps = 0;
+        for define in &defines.0 {
+            steps += 1;
+            // The file's summary starts as the headers' of its name, at
+            // most MAX_MACRO_BODY_TOKENS names.
+            // clone: the map owns its names apart from the passes.
+            let summary = summaries.entry(define.name.clone()).or_insert_with(|| {
+                self.summaries
+                    .get(&define.name)
+                    .cloned()
+                    .unwrap_or_default()
+            });
+            summary.add(define);
         }
         let known = |name: &str, called: bool| {
             !own.contains(name)
@@ -118,8 +254,17 @@ impl BlankMacros {
                     false => self.settled.names.contains(name),
                 }
         };
-        settle(&bodies, known, self.opens)
+        let mut settled = settle(&summaries, known, self.opens);
+        settled.steps += steps;
+        settled
     }
+}
+
+/// Whether the file at `path` is test code by its place.
+fn is_test_code(path: &str) -> bool {
+    FileKind::of(path)
+        .and_then(FileKind::language)
+        .is_some_and(|language| language.is_test_place(path))
 }
 
 impl FileMacros {
@@ -146,104 +291,67 @@ fn identity(file: &FileMacros) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-/// `defines` by name.
-fn bodies_of<'d>(defines: impl IntoIterator<Item = &'d Define>) -> Bodies {
-    let mut bodies = Bodies::new();
-    for define in defines {
-        // clone: the map owns its names apart from the files'.
-        let name = define.name.clone();
-        // clone: and its bodies, which a file's own judgement reads again.
-        let body = define.body.clone();
-        bodies
-            .entry(name)
-            .or_default()
-            .push((define.function_like, body));
+/// What `summaries` blank, a name `known` holds in a form taken as
+/// blankable in it; `opens` says whether an opening is defined beyond
+/// them.
+fn settle(summaries: &Summaries, known: impl Fn(&str, bool) -> bool, opens: bool) -> Settled {
+    let shaped = |opening| {
+        summaries
+            .iter()
+            .filter(move |(_, summary)| summary.shaped(opening))
+            .map(|(name, _)| name)
+    };
+    let mut names: BTreeSet<String> = shaped(true).cloned().collect();
+    if !names.is_empty() || opens {
+        // clone: the set owns the names apart from the summaries.
+        names.extend(shaped(false).cloned());
     }
-    bodies
-}
-
-/// What `bodies` blank, a name `known` holds in a form (`true` for called
-/// with arguments) taken as blankable in it; `opens` says whether an
-/// opening is defined beyond `bodies`.
-fn settle(bodies: &Bodies, known: impl Fn(&str, bool) -> bool, opens: bool) -> Settled {
     let mut settled = Settled {
-        names: namespaces(bodies, opens),
+        names,
         ..Settled::default()
     };
-    attributes(bodies, known, &mut settled);
-    settled.statics = bodies
+    attributes(summaries, known, &mut settled);
+    settled.statics = summaries
         .iter()
-        .filter(|(name, list)| {
-            name.len() >= STATIC.len() && settled.names.contains(*name) && holds_static(list)
-        })
-        // clone: the set owns the names apart from the map of bodies.
+        .filter(|(name, summary)| settled.names.contains(*name) && summary.holds_static())
+        // clone: the set owns the names apart from the summaries.
         .map(|(name, _)| name.clone())
         .collect();
     settled
 }
 
-/// Whether every body of `list` but an empty one holds `static`, one at
-/// least.
-fn holds_static(list: &[(bool, Body)]) -> bool {
-    let mut held = false;
-    for (_, body) in list {
-        match body {
-            Body::Attribute { empty: true, .. } => {}
-            Body::Attribute {
-                holds_static: true, ..
-            } => held = true,
-            Body::Attribute { .. } | Body::Opens | Body::Closes | Body::Code => return false,
+/// What a candidate name needs to be blanked: whether it is function-like,
+/// and the names it needs blankable, each in its form.
+type Needs<'n> = (bool, Vec<(&'n str, bool)>);
+
+/// The candidates of `summaries`, by name, each with what it needs but the
+/// names `known` holds; the steps it takes charged to `settled`.
+fn candidates<'s>(
+    summaries: &'s Summaries,
+    known: impl Fn(&str, bool) -> bool,
+    settled: &mut Settled,
+) -> BTreeMap<&'s str, Needs<'s>> {
+    let mut needs = BTreeMap::new();
+    for (name, summary) in summaries {
+        if let Some(function_like) = summary.candidate() {
+            settled.steps += summary.wants.len() + 1;
+            let wants = summary
+                .wants
+                .iter()
+                .map(|(want, called)| (want.as_str(), *called))
+                .filter(|(want, called)| !known(want, *called))
+                .collect();
+            needs.insert(name.as_str(), (function_like, wants));
         }
     }
-    held
+    needs
 }
 
-/// The names every `#define` of which opens or closes a namespace, when
-/// one of them opens one or `opens` says another does; an empty arm
-/// beside them is allowed.
-fn namespaces(bodies: &Bodies, opens: bool) -> BTreeSet<String> {
-    let openings = shaped(bodies, &Body::Opens);
-    if openings.is_empty() && !opens {
-        return openings;
-    }
-    openings
-        .into_iter()
-        .chain(shaped(bodies, &Body::Closes))
-        .collect()
-}
-
-/// The names every `#define` of which is object-like and `wanted` or
-/// empty, one at least `wanted`.
-fn shaped(bodies: &Bodies, wanted: &Body) -> BTreeSet<String> {
-    bodies
-        .iter()
-        .filter(|(_, list)| {
-            list.iter()
-                .all(|(function_like, body)| !function_like && (body == wanted || is_empty(body)))
-                && list.iter().any(|(_, body)| body == wanted)
-        })
-        // clone: the set owns the names apart from the map of bodies.
-        .map(|(name, _)| name.clone())
-        .collect()
-}
-
-fn is_empty(body: &Body) -> bool {
-    match body {
-        Body::Attribute { empty, .. } => *empty,
-        Body::Opens | Body::Closes | Body::Code => false,
-    }
-}
-
-/// What a candidate name needs to be blanked: whether it is function-like,
-/// and the names its bodies write, each blankable in the form it is
-/// written in (`true` for called with arguments).
-type Needs<'n> = (bool, BTreeSet<(&'n str, bool)>);
-
-/// The attribute names of `bodies` added to `settled`: a least fixpoint
-/// over a worklist, so a cycle blanks nothing and each name is settled
-/// once. A name `known` holds needs nothing.
-fn attributes(bodies: &Bodies, known: impl Fn(&str, bool) -> bool, settled: &mut Settled) {
-    let needs = candidates(bodies, known, settled);
+/// The attribute names of `summaries` added to `settled`: a least
+/// fixpoint over a worklist, so a cycle blanks nothing and each name is
+/// settled once. A name `known` holds needs nothing.
+fn attributes(summaries: &Summaries, known: impl Fn(&str, bool) -> bool, settled: &mut Settled) {
+    let needs = candidates(summaries, known, settled);
     let mut needed_by: BTreeMap<(&str, bool), Vec<&str>> = BTreeMap::new();
     let mut left: BTreeMap<&str, usize> = BTreeMap::new();
     let mut ready = Vec::new();
@@ -280,55 +388,16 @@ fn attributes(bodies: &Bodies, known: impl Fn(&str, bool) -> bool, settled: &mut
     }
 }
 
-/// The candidates of `bodies`, by name, each with what it needs but the
-/// names `known` holds; the steps it takes charged to `settled`.
-fn candidates<'b>(
-    bodies: &'b Bodies,
-    known: impl Fn(&str, bool) -> bool,
-    settled: &mut Settled,
-) -> BTreeMap<&'b str, Needs<'b>> {
-    let mut needs = BTreeMap::new();
-    for (name, list) in bodies {
-        if let Some((function_like, mut wants)) = candidate(list) {
-            settled.steps += wants.len() + 1;
-            wants.retain(|(want, called)| !known(want, *called));
-            needs.insert(name.as_str(), (function_like, wants));
-        }
-    }
-    needs
-}
-
-/// Whether the `#define`s `list` of one name make a candidate: its form
-/// (function-like) and the names it needs blankable, each with the form
-/// it is written in; `None` when no body or mix of them can be blanked.
-fn candidate(list: &[(bool, Body)]) -> Option<Needs<'_>> {
-    let function_like = list.first()?.0;
-    let mut wants = BTreeSet::new();
-    let mut written = false;
-    for (form, body) in list {
-        let Body::Attribute {
-            names,
-            calls,
-            empty,
-            ..
-        } = body
-        else {
-            return None;
-        };
-        if *form != function_like {
-            return None;
-        }
-        written |= !empty;
-        wants.extend(names.iter().map(|name| (name.as_str(), false)));
-        wants.extend(calls.iter().map(|name| (name.as_str(), true)));
-    }
-    (!function_like || written).then_some((function_like, wants))
-}
-
 #[cfg(test)]
 impl BlankMacros {
-    /// The steps the tree's fixpoint took.
+    /// The steps the fixpoint of the tree's code took.
     pub(super) const fn steps(&self) -> usize {
-        self.settled.steps
+        self.code.settled.steps
+    }
+
+    /// The steps the judgement of the file at `path` that `lexed`
+    /// describes took.
+    pub(super) fn file_steps(&self, path: &str, lexed: &Lexed) -> usize {
+        self.judged(path, lexed).1
     }
 }

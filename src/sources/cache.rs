@@ -61,9 +61,11 @@ pub(super) fn key(kind: FileKind, content: Content, macros: &FileMacros) -> Symb
 }
 
 /// The key of the lexical pass of a C or C++ file whose bytes are
-/// `content`.
+/// `content`: the pass reads both grammars' words.
 pub(super) fn lexed_key(content: Content) -> SymbolsKey {
     let mut hasher = rules(LEXED);
+    hasher.update(&FileKind::C.grammar());
+    hasher.update(&FileKind::Cpp.grammar());
     hasher.update(&content.0);
     SymbolsKey::new(*hasher.finalize().as_bytes())
 }
@@ -192,9 +194,9 @@ mod tests {
 
     #[test]
     fn the_part_of_the_trees_set_a_file_writes_keys_a_c_or_cpp_file_and_no_other() {
-        let tree = BlankMacros::of([&lexed(b"#define API\n").into_defines()]);
+        let tree = BlankMacros::of([("api.h", &lexed(b"#define API\n").into_defines())]);
         let writes = Content::of(b"API int f();");
-        let macros = tree.of_file(&lexed(b"API int f();"));
+        let macros = tree.of_file("f.c", &lexed(b"API int f();"));
 
         for kind in [FileKind::C, FileKind::Cpp] {
             assert_ne!(key(kind, writes, &macros), key(kind, writes, &none()));

@@ -11,12 +11,15 @@
 #endif
 #define SHELF_PRINTF(f, a) __attribute__((format(printf, f, a)))
 
-/* A specifier the tree defines: written `static` before the parse, as
- * every build but the tests' expands it. */
+/* Specifiers the tree defines that hold `static`, as every build but the
+ * tests' expands them: what each marks is private, however short its
+ * name. */
 #ifdef SHELF_TESTING
 #define SHELF_STATIC
+#define SI
 #else
 #define SHELF_STATIC static
+#define SI static inline
 #endif
 
 /* A macro that writes a member: the member is no definition. */
@@ -50,6 +53,8 @@ SHELF_API void shelf_close(shelf *s);
 SHELF_API int shelf_log(shelf *s, const char *format, ...) SHELF_PRINTF(2, 3);
 SHELF_API void (*shelf_on_close(shelf *s, void (*hook)(shelf *)))(shelf *);
 int (shelf_max)(int a, int b);
+int (*(*shelf_pick_pick(int which))(int))(int);
+void (shelf_reset) (shelf_cursor *c);
 SHELF_API const char *(shelf_title)(const shelf *s);
 extern unsigned shelf_opened;
 

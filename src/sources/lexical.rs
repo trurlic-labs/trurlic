@@ -1,11 +1,10 @@
 //! The lexical passes of the C and C++ files a call reads, and the cache
 //! reads that key their indexes. The calling tree's headers are read
 //! first ([`read_headers`]): their `#define`s give the indexer the tree's
-//! blank set, and their digests key each header's entries, so a header
-//! whose index the cache holds is read once. Each pass is cached by its
-//! file's content, so an unchanged file is never lexed again, and the
-//! misses of the call are read before the store's, so a header lexed in
-//! the first step is not lexed again in the second.
+//! blank sets. Each pass is cached by its file's content, so an unchanged
+//! file is never lexed again, and the misses of the call are read before
+//! the store's, so a header lexed in the first step is not lexed again in
+//! the second.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -16,14 +15,6 @@ use crate::store::{Store, SymbolsKey};
 
 use super::cache::{self, Content};
 use super::{Reads, read_source};
-
-/// A header of the calling tree as the first step read it: its bytes'
-/// digest and length, which key its entries without a second read.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Header {
-    pub(super) content: Content,
-    pub(super) bytes: usize,
-}
 
 /// What a call reads its cache entries from: the store, and the misses
 /// it has found so far.
@@ -55,25 +46,19 @@ impl Cached<'_> {
         cache::decode(key, &entry, kind, source_bytes)
     }
 
-    /// The lexical pass of a file of `source_bytes` bytes whose digest is
-    /// `content`; `None` when no entry holds it.
-    pub(super) fn lexed(&self, content: Content, source_bytes: usize) -> Option<Lexed> {
-        let key = cache::lexed_key(content);
-        match self.misses.get(&key) {
-            Some(entry) => cache::decode_lexical(key, entry, source_bytes),
-            None => {
-                let max = cache::max_lexed_entry_bytes(source_bytes);
-                let entry = self.store.read_symbols(key, max)?;
-                cache::decode_lexical(key, &entry, source_bytes)
-            }
-        }
-    }
-
     /// The lexical pass of `bytes`, whose digest is `content`: the cache's,
     /// else lexed here.
     pub(super) fn lexed_or_lex(&self, content: Content, bytes: &[u8]) -> Found {
         let key = cache::lexed_key(content);
-        if let Some(lexed) = self.lexed(content, bytes.len()) {
+        let decode = |entry: &[u8]| cache::decode_lexical(key, entry, bytes.len());
+        let cached = match self.misses.get(&key) {
+            Some(entry) => decode(entry),
+            None => self
+                .store
+                .read_symbols(key, cache::max_lexed_entry_bytes(bytes.len()))
+                .and_then(|entry| decode(&entry)),
+        };
+        if let Some(lexed) = cached {
             return Found {
                 lexed,
                 key,
@@ -86,21 +71,18 @@ impl Cached<'_> {
     }
 }
 
-/// The headers of `walked`, the tree at `root`, each read in a bounded
-/// read and within its kind's size, by path; their `#define`s are the
-/// indexer's tree set. A header that cannot be read gives none, as one
-/// that vanished; a system that starts no thread leaves the set empty,
-/// and the files' own reads then fail alike.
-pub(super) fn read_headers(
-    store: &Store,
-    reads: &mut Reads,
-    root: &Path,
-    walked: &BTreeMap<String, FileKind>,
-) -> BTreeMap<String, Header> {
-    let headers: Vec<(&String, FileKind)> = walked
+/// Read the headers of the tree at `root` that `reads` walked, each in a
+/// bounded read and within its kind's size, and give their `#define`s to
+/// its indexer as the tree's blank sets. A header that cannot be read
+/// gives none, as one that vanished; a system that starts no thread leaves
+/// the sets empty, and the files' own reads then fail alike.
+pub(super) fn read_headers(store: &Store, reads: &mut Reads, root: &Path) {
+    let headers: Vec<(String, FileKind)> = reads
+        .walked
         .iter()
         .filter(|(path, kind)| kind.blanks_macros() && code::is_header(path))
-        .map(|(path, kind)| (path, *kind))
+        // clone: the sets name each header by its path apart from the walk.
+        .map(|(path, kind)| (path.clone(), *kind))
         .collect();
     let cached = Cached {
         store,
@@ -111,28 +93,19 @@ pub(super) fn read_headers(
         if bytes.len() > kind.max_bytes() {
             return None;
         }
-        let content = Content::of(&bytes);
-        let header = Header {
-            content,
-            bytes: bytes.len(),
-        };
-        Some((header, cached.lexed_or_lex(content, &bytes)))
+        Some(cached.lexed_or_lex(Content::of(&bytes), &bytes))
     });
     let Ok(read) = read else {
         diag!("warning: the C and C++ macros to blank were not read: no thread started");
-        return BTreeMap::new();
+        return;
     };
-    let mut found = BTreeMap::new();
     let mut defines = Vec::with_capacity(read.len());
     for ((path, _), read) in headers.into_iter().zip(read) {
-        let Some((header, lexed)) = read else {
+        let Some(found) = read else {
             continue;
         };
-        reads.note(lexed.key, lexed.miss);
-        defines.push(lexed.lexed.into_defines());
-        // clone: the map outlives the walk it was read from.
-        found.insert(path.clone(), header);
+        reads.note(found.key, found.miss);
+        defines.push((path, found.lexed.into_defines()));
     }
     reads.indexer.take_headers(&defines);
-    found
 }

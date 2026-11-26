@@ -13,15 +13,18 @@
 ; macro states none.
 
 ; Functions with a return type: defined, a pointer or a function pointer
-; returned among them, and declared (a prototype) at the file's top; a
-; name in parentheses (`int (max)(int, int)`) is the function's.
+; returned among them, to two levels (a function that returns a pointer
+; to a function that returns a function pointer), and declared (a
+; prototype) at the file's top; a name in parentheses
+; (`int (max)(int, int)`) is the function's.
 ((function_definition type: (_)
    declarator: [(function_declarator declarator: (identifier) @name)
                 (function_declarator declarator: (parenthesized_declarator (identifier) @name))
                 (_ declarator: (function_declarator declarator: (parenthesized_declarator (identifier) @name)))
                 (_ declarator: (function_declarator declarator: (identifier) @name))
                 (_ declarator: (_ declarator: (function_declarator declarator: (identifier) @name)))
-                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (identifier) @name))))]) @definition
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (identifier) @name))))
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (identifier) @name)))))))]) @definition
   (#set! kind "function")
   (#set! visibility "public"))
 
@@ -30,7 +33,8 @@
                 (function_declarator declarator: (parenthesized_declarator (identifier) @name))
                 (_ declarator: (function_declarator declarator: (parenthesized_declarator (identifier) @name)))
                 (_ declarator: (function_declarator declarator: (identifier) @name))
-                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (identifier) @name))))]) @definition
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (identifier) @name))))
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (identifier) @name)))))))]) @definition
   (#set! kind "function")
   (#set! container "false")
   (#set! within "top")

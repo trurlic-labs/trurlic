@@ -7,12 +7,11 @@
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Item {
     /// A preprocessor directive, its continued lines and comments in it
-    /// included; whether a comment stands before one of its line
-    /// continuations.
+    /// included; whether a token of it follows one of its comments.
     Directive {
         start: usize,
         end: usize,
-        continued_comments: bool,
+        inner_comments: bool,
     },
     Comment {
         start: usize,
@@ -22,11 +21,24 @@ pub(super) enum Item {
         start: usize,
         end: usize,
     },
-    /// A literal, a number or a punctuation mark.
+    /// A literal, a number or a punctuator, one of several bytes
+    /// ([`PUNCTUATORS`]) read whole.
     Token {
         start: usize,
         end: usize,
     },
+}
+
+impl Item {
+    /// Where it starts.
+    pub(super) const fn start(self) -> usize {
+        match self {
+            Self::Directive { start, .. }
+            | Self::Comment { start, .. }
+            | Self::Identifier { start, .. }
+            | Self::Token { start, .. } => start,
+        }
+    }
 }
 
 /// Hand `each` the items of `text`, in one pass: each byte is read a
@@ -58,11 +70,11 @@ fn item_at(text: &str, at: usize, line_start: bool) -> (usize, Option<Item>) {
     let token = |end| (end, Some(Item::Token { start: at, end }));
     match bytes.get(at) {
         Some(b'#') if line_start => {
-            let (end, continued_comments) = directive_end(bytes, at);
+            let (end, inner_comments) = directive_end(bytes, at);
             let directive = Item::Directive {
                 start: at,
                 end,
-                continued_comments,
+                inner_comments,
             };
             (end, Some(directive))
         }
@@ -79,14 +91,24 @@ fn item_at(text: &str, at: usize, line_start: bool) -> (usize, Option<Item>) {
             (end, Some(Item::Identifier { start: at, end }))
         }
         Some(b'0'..=b'9') => token(number_end(bytes, at)),
-        _ => token(
-            at + text
-                .get(at..)
-                .and_then(|rest| rest.chars().next())
-                .map_or(1, char::len_utf8),
-        ),
+        _ => {
+            let rest = text.get(at..).unwrap_or_default();
+            let length = match PUNCTUATORS.iter().find(|p| rest.starts_with(**p)) {
+                Some(punctuator) => punctuator.len(),
+                None => rest.chars().next().map_or(1, char::len_utf8),
+            };
+            token(at + length)
+        }
     }
 }
+
+/// The punctuators of C and C++ longer than one byte, each one token as
+/// the language lexes it, longest first, so a read takes the longest that
+/// starts at its place.
+const PUNCTUATORS: [&str; 27] = [
+    "<<=", ">>=", "...", "->*", "<=>", "->", "++", "--", "<<", ">>", "<=", ">=", "==", "!=", "&&",
+    "||", "##", "::", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", ".*",
+];
 
 /// The bytes of a line continuation at `at`: a backslash right before a
 /// line break; 0 when none is there.
@@ -99,27 +121,30 @@ fn continuation(bytes: &[u8], at: usize) -> usize {
 }
 
 /// The end of the directive at `at` (its line, continued, and the block
-/// comments that run past it), and whether a comment comes before one of
-/// its continuations.
+/// comments that run past it), and whether a token of it follows one of
+/// its comments.
 fn directive_end(bytes: &[u8], at: usize) -> (usize, bool) {
     let mut next = at + 1;
-    let (mut commented, mut continued_comments) = (false, false);
+    let (mut commented, mut inner_comments) = (false, false);
     while let Some(&byte) = bytes.get(next) {
         match byte {
             b'\n' => break,
-            b'\\' if continuation(bytes, next) > 0 => {
-                continued_comments |= commented;
-                next += continuation(bytes, next);
-            }
+            b'\\' if continuation(bytes, next) > 0 => next += continuation(bytes, next),
             b'/' if matches!(bytes.get(next + 1), Some(b'/' | b'*')) => {
                 commented = true;
                 next = comment_end(bytes, next);
             }
-            b'"' | b'\'' => next = literal_end(bytes, next),
-            _ => next += 1,
+            b' ' | b'\t' | b'\r' | b'\x0c' | b'\x0b' => next += 1,
+            _ => {
+                inner_comments |= commented;
+                next = match byte {
+                    b'"' | b'\'' => literal_end(bytes, next),
+                    _ => next + 1,
+                };
+            }
         }
     }
-    (next, continued_comments)
+    (next, inner_comments)
 }
 
 /// The end of the comment at `at`: a block's close, or a line's end, its
@@ -377,6 +402,46 @@ mod tests {
                 ("identifier", "f"),
             ]
         );
+    }
+
+    #[test]
+    fn a_punctuator_of_several_bytes_is_one_token() {
+        let tokens = |text| -> Vec<&str> { items(text).into_iter().map(|(_, t)| t).collect() };
+
+        assert_eq!(
+            tokens("a->b && c ... d ## e <<= f :: g"),
+            [
+                "a", "->", "b", "&&", "c", "...", "d", "##", "e", "<<=", "f", "::", "g"
+            ]
+        );
+        assert_eq!(tokens("a & &b"), ["a", "&", "&", "b"]);
+        assert_eq!(tokens("a- >b"), ["a", "-", ">", "b"]);
+    }
+
+    #[test]
+    fn a_directive_states_whether_a_token_follows_a_comment_in_it() {
+        let inner = |text| {
+            matches!(
+                lex_first(text),
+                Item::Directive {
+                    inner_comments: true,
+                    ..
+                }
+            )
+        };
+
+        assert!(inner("#define M(a) ((a) /* c */ + 1)"));
+        assert!(inner("#define M(a) ((a) + \\\n  /* slack */ 1)"));
+        assert!(!inner("#define M(a) ((a) + 1) /* trailing */ // and this"));
+    }
+
+    /// The first item of `text`.
+    fn lex_first(text: &str) -> Item {
+        let mut first = None;
+        lex(text, true, |item| {
+            first.get_or_insert(item);
+        });
+        first.unwrap()
     }
 
     #[test]

@@ -1,22 +1,37 @@
 use super::*;
 
-/// The set of a tree whose headers are `headers`.
-fn tree(headers: &[&str]) -> BlankMacros {
-    let defines: Vec<Defines> = headers
+/// The sets of a tree whose headers are `headers`, each its path and its
+/// text.
+fn tree_at(headers: &[(&str, &str)]) -> BlankMacros {
+    let defines: Vec<(&str, Defines)> = headers
         .iter()
-        .map(|text| lexed(text.as_bytes()).into_defines())
+        .map(|(path, text)| (*path, lexed(text.as_bytes()).into_defines()))
         .collect();
-    BlankMacros::of(&defines)
+    BlankMacros::of(defines.iter().map(|(path, defines)| (*path, defines)))
 }
 
-/// What `text` blanks in a tree whose set is `tree`.
+/// The sets of a tree whose headers are `headers`, none in a test place.
+fn tree(headers: &[&str]) -> BlankMacros {
+    let named: Vec<String> = (0..headers.len())
+        .map(|n| format!("include/{n}.h"))
+        .collect();
+    let paths: Vec<(&str, &str)> = named
+        .iter()
+        .map(String::as_str)
+        .zip(headers.iter().copied())
+        .collect();
+    tree_at(&paths)
+}
+
+/// What `text`, a source file outside test places, blanks in a tree whose
+/// sets are `tree`.
 fn file(tree: &BlankMacros, text: &str) -> FileMacros {
-    tree.of_file(&lexed(text.as_bytes()))
+    tree.of_file("src/f.cc", &lexed(text.as_bytes()))
 }
 
 /// `text` blanked in a tree whose headers are `headers`.
 fn blanked(headers: &[&str], text: &str) -> String {
-    blank(text, &file(&tree(headers), text)).into_owned()
+    blank(text, &file(&tree(headers), text)).text.into_owned()
 }
 
 /// The names `set` blanks: written alone, then called.
@@ -184,18 +199,30 @@ fn a_tree_defined_attribute_is_blanked_where_code_writes_it_alone() {
         "#ifdef API\n#define OTHER API\n#endif\n/* API */     int f(const char *s, ...)             ;\nconst char *t = \"API\", *r = R\"x(API)x\";\nint PRINTF;\n"
     );
     assert!(matches!(
-        blank("int f();\n", &FileMacros::default()),
+        blank("int f();\n", &FileMacros::default()).text,
         Cow::Borrowed(_)
     ));
 }
 
 #[test]
-fn a_static_macro_is_written_static_where_its_name_holds_it() {
-    let header = "#ifdef TESTING\n#define STATIC\n#define ST\n#else\n#define STATIC static\n#define ST static\n#endif\n";
+fn a_static_macro_of_any_length_marks_the_code_after_it_private() {
+    let header = "#ifdef TESTING\n#define STATIC\n#define SI\n#else\n#define STATIC static\n#define SI static inline\n#endif\n#define local static\n#define API\n";
+    let text = "STATIC int a;\nSI /* c */ int b(void);\nlocal API int c;\nint d; local\n#if X\n#endif\nint e;\n";
+    let blanked = blank(text, &file(&tree(&[header]), text));
+    let after = |code: &str| text.find(code).unwrap();
 
     assert_eq!(
-        blanked(&[header], "STATIC int a;\nST int b;\n"),
-        "static int a;\n   int b;\n"
+        blanked.text,
+        "       int a;\n   /* c */ int b(void);\n          int c;\nint d;      \n#if X\n#endif\nint e;\n"
+    );
+    assert_eq!(
+        blanked.private,
+        [
+            after("int a"),
+            after("int b"),
+            after("int c"),
+            after("int e")
+        ]
     );
 }
 
@@ -249,15 +276,20 @@ fn a_call_a_statement_ends_before_its_parenthesis_blanks_only_the_names_in_it() 
 }
 
 #[test]
-fn the_comments_of_a_continued_define_are_blanked_line_breaks_and_all() {
+fn the_comments_inside_a_define_are_blanked_line_breaks_and_all() {
     let text = "#define SWAP(a, b) do { /* swap the\n two */ \\\n  t = a; \\\n } while (0) // last\n#define ONE 1 /* one */\n/* kept */\n";
+    let inside = "#define M(a) ((a) /* c */ + 1)\n#define LIMIT(a) ((a) + \\\n    /* slack */ 1)\n";
 
     assert_eq!(
-        blank(text, &FileMacros::default()),
+        blank(text, &FileMacros::default()).text,
         format!(
             "#define SWAP(a, b) do {{ {} \\\n  t = a; \\\n }} while (0) // last\n#define ONE 1 /* one */\n/* kept */\n",
             " ".repeat(19)
         )
+    );
+    assert_eq!(
+        blank(inside, &FileMacros::default()).text,
+        "#define M(a) ((a)         + 1)\n#define LIMIT(a) ((a) + \\\n                1)\n"
     );
 }
 
@@ -296,6 +328,55 @@ fn hostile_defines_are_read_in_linear_work() {
     }
     assert!(tree(&[&long_body]).steps() == 0);
     assert_eq!(blanked(&[&calls], &calls).len(), calls.len());
+}
+
+#[test]
+fn a_files_own_defines_are_judged_in_work_its_own_bound() {
+    let wide: String = (0..MAX_MACRO_BODY_TOKENS)
+        .map(|n| format!("a{n} "))
+        .collect();
+    let headers: Vec<String> = (0..1000)
+        .flat_map(|n| {
+            [
+                format!("#define DEBUG {wide}\n"),
+                format!("#define WIDE w{n}\n"),
+            ]
+        })
+        .collect();
+    let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
+    let set = tree(&headers);
+    let own = lexed(b"#define DEBUG\n#define WIDE\nDEBUG WIDE int f(void);\n");
+
+    let steps: usize = (0..1000).map(|_| set.file_steps("src/f.c", &own)).sum();
+
+    // Each file's two names, each needing at most the bound's names; the
+    // thousand headers of each name cost nothing per file.
+    assert!(steps <= 1000 * 4 * (2 + MAX_MACRO_BODY_TOKENS), "{steps}");
+}
+
+#[test]
+fn a_define_of_a_word_the_grammars_read_is_no_macro() {
+    let header = "#ifndef STDC\n#define const\n#define inline\n#endif\n#define __attribute__(x)\n#define restrict\n#define _Atomic\n#define API\n";
+    let set = file(
+        &tree(&[header]),
+        "const inline restrict _Atomic API __attribute__((x)) int f;",
+    );
+
+    assert_eq!(names(&set), (vec!["API"], vec![]));
+}
+
+#[test]
+fn a_header_in_a_test_place_reaches_test_code_alone() {
+    let set = tree_at(&[
+        ("tests/fake.h", "#define DONE\n#define FAKE_API\n"),
+        ("include/api.h", "#define API\n"),
+    ]);
+    let text = lexed(b"API FAKE_API DONE");
+    let all = vec!["API", "DONE", "FAKE_API"];
+
+    assert_eq!(names(&set.of_file("src/state.c", &text)).0, ["API"]);
+    assert_eq!(names(&set.of_file("tests/state_check.c", &text)).0, all);
+    assert_eq!(names(&set.of_file("src/state_test.cc", &text)).0, all);
 }
 
 #[test]

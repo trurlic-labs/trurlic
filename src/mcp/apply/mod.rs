@@ -127,10 +127,9 @@ fn apply(mut writer: Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
     } = arguments;
     // The tree may have changed since the repairs were read: each one is
     // held to it again under the lock.
-    let code_root = &writer.state().code_root;
     for op in &mut ops {
         if let Op::RepairAnchors(RepairAnchors::Every(map)) = op {
-            unrepaired.extend(sources::still_holding(code_root, map));
+            unrepaired.extend(sources::still_holding(writer.store(), map));
         }
     }
     let batch = Batch {

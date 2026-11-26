@@ -11,14 +11,14 @@ use super::symbol::Symbol;
 /// The index of `bytes`, a file of `kind` alone in its tree: a C or C++
 /// file blanks what its own `#define`s make blankable.
 pub(crate) fn index(kind: FileKind, bytes: &[u8]) -> Indexed {
-    index_in(kind, bytes, &BlankMacros::default())
+    index_in("", kind, bytes, &BlankMacros::default())
 }
 
-/// The index of `bytes`, a file of `kind` in a tree whose headers' set is
-/// `tree`.
-pub(crate) fn index_in(kind: FileKind, bytes: &[u8], tree: &BlankMacros) -> Indexed {
+/// The index of `bytes`, the file at `path` of `kind`, in a tree whose
+/// headers' sets are `tree`.
+pub(crate) fn index_in(path: &str, kind: FileKind, bytes: &[u8], tree: &BlankMacros) -> Indexed {
     let macros = match kind.blanks_macros() {
-        true => tree.of_file(&lexed(bytes)),
+        true => tree.of_file(path, &lexed(bytes)),
         false => FileMacros::default(),
     };
     super::index::index(kind, bytes, &macros)

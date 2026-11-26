@@ -1232,11 +1232,28 @@ fn a_macros_body_is_hashed_by_its_tokens_whatever_their_spacing() {
         "#define M(a) ( ( a ) + 1 )\n",
         "#define M(a)   ((a)  + \\\n    1)\n",
         "#define M(a) ((a) /* one */ + \\\r\n 1) // one\n",
+        "#define M(a) ((a) /* one */ + 1)\n",
+        "#define M(a) ((a) + \\\n /* one */ 1)\n",
     ] {
         assert_eq!(macro_hash(same), one, "{same:?}");
     }
-    assert_ne!(macro_hash("#define M(a) ((a) + 2)\n"), one);
-    assert_ne!(macro_hash("#define M(a) ((a) ++ 1)\n"), one);
+    for other in [
+        "#define M(a) ((a) + 2)\n",
+        "#define M(a) ((a) ++ 1)\n",
+        "#define M(a) ((a) /* one */ - 7)\n",
+    ] {
+        assert_ne!(macro_hash(other), one, "{other:?}");
+    }
+    // A punctuator of two bytes is one token, two of one byte are two.
+    for (one, two) in [
+        ("((a) && (b))", "((a) & &(b))"),
+        ("a->b", "a- >b"),
+        ("a##b", "a# #b"),
+        ("a++b", "a+ +b"),
+    ] {
+        let define = |body: &str| macro_hash(&format!("#define M(a, b) {body}\n"));
+        assert_ne!(define(one), define(two), "{one:?}");
+    }
 }
 
 #[test]
@@ -1269,7 +1286,7 @@ fn a_tree_defined_attribute_macro_is_blanked_before_the_parse() {
         b"#define API __attribute__((visibility(\"default\")))\n#define NS_BEGIN namespace shelf {\n#define NS_END }\n",
     );
     let read = |tree: &BlankMacros| {
-        let index = index_in(FileKind::Cpp, text.as_bytes(), tree).unwrap();
+        let index = index_in("shelf.cc", FileKind::Cpp, text.as_bytes(), tree).unwrap();
         let scopes = Scopes(&index.scopes);
         index
             .definitions
@@ -1279,8 +1296,53 @@ fn a_tree_defined_attribute_macro_is_blanked_before_the_parse() {
     };
 
     assert_eq!(
-        read(&BlankMacros::of([&header.into_defines()])),
+        read(&BlankMacros::of([("api.h", &header.into_defines())])),
         ["Book", "Book::pages", "f"]
     );
     assert!(!read(&BlankMacros::default()).contains(&"Book".to_owned()));
+}
+
+#[test]
+fn a_blanked_static_macro_makes_what_it_marks_private_as_static_does() {
+    let text = "#define local static\n#define SI static inline\n#define API\n\
+                local int f(void) { return 0; }\nSI int g(void) { return 1; }\n\
+                local API char buffer[4];\nint h(void);\nint (*local_fn)(void);\n\
+                struct tm local_tm;\nlocal struct s { int a; } v;\n";
+    let visibility: Vec<String> = statements_of(FileKind::C, text)
+        .into_iter()
+        .map(|(statement, _)| statement)
+        .filter(|statement| !statement.contains(" Macro "))
+        .collect();
+
+    assert_eq!(
+        visibility,
+        [
+            "f Function Code Private",
+            "g Function Code Private",
+            "buffer Variable Code Private",
+            "h Function Code Public",
+            "local_fn Variable Code Public",
+            "local_tm Variable Code Public",
+            "s Struct Code Private",
+            "v Variable Code Private",
+            "s::a Field Code Public",
+        ]
+    );
+}
+
+#[test]
+fn a_spans_lines_are_counted_in_the_bytes_as_written() {
+    let text = "#define SWAP(a, b) do { /* swap the\n two values,\n three lines */ \\\n  t = a; } while (0)\nint after(void) { return 0; }\n";
+    let index = crate::code::testing::index(FileKind::C, text.as_bytes()).unwrap();
+    let scopes = Scopes(&index.scopes);
+    let lines: Vec<(String, usize, usize)> = index
+        .definitions
+        .iter()
+        .map(|d| (path(scopes, d.scope), d.span.first_line, d.span.last_line))
+        .collect();
+
+    assert_eq!(
+        lines,
+        [("SWAP".to_owned(), 1, 4), ("after".to_owned(), 5, 5)]
+    );
 }

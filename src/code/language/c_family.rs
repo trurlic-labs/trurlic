@@ -4,18 +4,22 @@
 //! (`LEVELDB_EXPORT`, `FMT_CONSTEXPR`, `CURL_PRINTF(2, 3)`) or as a
 //! namespace's opening and closing (`FMT_BEGIN_NAMESPACE`) are blanked,
 //! so `class LEVELDB_EXPORT DB {` parses as the class it is; and the
-//! comments of a `#define` continued over lines are blanked, line breaks
-//! and all, since tree-sitter's C grammars read a break or a blank run
-//! there as the directive's end.
+//! comments of a `#define` that a token of it follows are blanked, line
+//! breaks and all, since tree-sitter's C grammars read a comment, a break
+//! or a blank run there as the directive's end.
 //!
-//! A blank is spaces in place of the bytes, so every offset holds, and
-//! the parse and the hash read the blanked text: a blanked name is no
-//! token. A blankable object-like macro whose every body but an empty one
-//! holds `static` (`#define STATIC static`) is written `static` instead,
-//! when its name is long enough to hold it, so the definition it stands
-//! before stays private. A name is blanked only where it stands outside
-//! every directive, comment and literal, so the `#define` that made it
-//! blankable and an `#ifdef` that tests it keep it.
+//! A blank is spaces in place of the bytes, so every offset holds: the
+//! parse and the hash read the blanked text, in which a blanked name is no
+//! token, and a span's lines are counted in the bytes as written. A
+//! blankable object-like macro whose every body but an empty one holds
+//! `static` (`#define local static`) makes what it marks private: the
+//! blank states, beside the text, where the code after each such name
+//! starts ([`Blanked::private`]), and the resolver reads a mark there as it
+//! reads `static`. A name is blanked only where it stands outside every
+//! directive, comment and literal, so the `#define` that made it blankable
+//! and an `#ifdef` that tests it keep it; and a `#define` of a word either
+//! grammar reads itself (`const`, `inline`, `__attribute__`) names no macro
+//! the blank reads, since the parse already reads the word.
 //!
 //! Which names are blankable (`set.rs`) is a fact of the tree's headers
 //! and of the file itself. The lexical pass of a file ([`lexed`]) gives
@@ -24,22 +28,31 @@
 //! is indexed against the part of it that the file writes, its own
 //! `#define`s judged with it. Each `#define`'s body is read up to
 //! [`MAX_MACRO_BODY_TOKENS`] tokens, and a blanked call's arguments up to
-//! [`MAX_BLANK_ARGUMENT_BYTES`], so every pass is linear in the bytes.
+//! [`MAX_BLANK_ARGUMENT_BYTES`], so each pass is linear in its bytes.
 //!
 //! What no rule sees: the members, enumerators and functions a
 //! function-like macro generates (`BIT(flag);` in a struct), a macro
 //! defined outside the tree (a system or generated header) or only in a
 //! source file another file includes, and the segments of a namespace a
-//! macro opens, which its definitions lack.
+//! macro opens, which its definitions lack. And what no rule keeps out: a
+//! header's macro reaches the files of the tree that cannot include it,
+//! a vendored library's among them, but in a test place's (`set.rs`).
 
 mod encoding;
 mod lex;
 mod set;
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use lex::{Item, lex};
+
+use super::Language;
+use crate::code::general::{self, Source};
+use crate::code::index::{FileIndex, IndexFault};
+use crate::code::scope::ScopeTree;
 
 pub(crate) use encoding::{decode_lexed, encode_lexed, max_lexed_bytes};
 pub(crate) use set::{BlankMacros, FileMacros};
@@ -54,7 +67,7 @@ pub(in crate::code) const MAX_BLANK_ARGUMENT_BYTES: usize = 256;
 
 /// The words a declaration may hold that state no name: a body of them
 /// alone is an attribute.
-const SPECIFIERS: [&str; 31] = [
+const SPECIFIERS: [&str; 32] = [
     STATIC,
     "inline",
     "extern",
@@ -63,6 +76,7 @@ const SPECIFIERS: [&str; 31] = [
     "consteval",
     "constinit",
     "volatile",
+    "_Atomic",
     "register",
     "thread_local",
     "_Thread_local",
@@ -89,7 +103,7 @@ const SPECIFIERS: [&str; 31] = [
 ];
 
 /// The specifier that makes a definition private, which a blanked macro
-/// that holds it is written as.
+/// that holds it marks.
 const STATIC: &str = "static";
 
 /// The attribute forms a compiler knows, each a word and its parenthesized
@@ -166,7 +180,7 @@ impl Lexed {
 }
 
 /// Whether the file at `path` is a C or C++ header, whose `#define`s
-/// reach every file of its tree.
+/// reach the files of its tree (`set.rs`).
 pub(crate) fn is_header(path: &str) -> bool {
     HEADER_EXTENSIONS
         .iter()
@@ -183,7 +197,8 @@ pub(crate) fn lexed(bytes: &[u8]) -> Lexed {
     let mut spelled = Vec::new();
     lex(text, true, |item| match item {
         Item::Directive { start, end, .. } => {
-            defines.extend(text.get(start..end).and_then(define_of));
+            let define = text.get(start..end).and_then(define_of);
+            defines.extend(define.filter(|define| !grammar_words().contains(&define.name)));
         }
         Item::Identifier { start, end } => spelled.extend(text.get(start..end)),
         Item::Comment { .. } | Item::Token { .. } => {}
@@ -194,6 +209,28 @@ pub(crate) fn lexed(bytes: &[u8]) -> Lexed {
         defines: Defines(defines),
         spelled: spelled.into_iter().flat_map(|name| [name, "\n"]).collect(),
     }
+}
+
+/// The words either C grammar reads as a token of its own, each a keyword,
+/// a specifier or an attribute form: the anonymous kinds of their nodes
+/// that are identifiers.
+fn grammar_words() -> &'static BTreeSet<String> {
+    static WORDS: OnceLock<BTreeSet<String>> = OnceLock::new();
+    WORDS.get_or_init(|| {
+        let mut words = BTreeSet::new();
+        for language in [&super::C, &super::CPP] {
+            let grammar = (language.grammar)();
+            for id in 0..u16::try_from(grammar.node_kind_count()).unwrap_or(u16::MAX) {
+                let word = grammar.node_kind_for_id(id).filter(|kind| {
+                    !grammar.node_kind_is_named(id)
+                        && is_identifier(kind)
+                        && kind.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                });
+                words.extend(word.map(str::to_owned));
+            }
+        }
+        words
+    })
 }
 
 /// The `#define` the directive `text` is, when it is one.
@@ -300,8 +337,8 @@ fn opens(tokens: &[&str]) -> bool {
                 at += 1;
                 while tokens.get(at).is_some_and(|token| is_identifier(token)) {
                     at += 1;
-                    if tokens.get(at) == Some(&":") && tokens.get(at + 1) == Some(&":") {
-                        at += 2;
+                    if tokens.get(at) == Some(&"::") {
+                        at += 1;
                     }
                 }
             }
@@ -360,16 +397,43 @@ fn is_identifier(word: &str) -> bool {
 enum Fill {
     /// Spaces, its line breaks kept.
     Spaces,
-    /// Spaces, its line breaks too: a comment of a continued `#define`.
+    /// Spaces, its line breaks too: a comment inside a `#define`.
     Joined,
-    /// `static`, then spaces.
-    Static,
+    /// Spaces, and what follows it is private: a static macro.
+    Private,
 }
 
-/// `text`, a C or C++ file, with the names of `macros` (and a blanked
-/// call's arguments) and the comments of a continued `#define` blanked;
-/// borrowed when nothing is.
-pub(in crate::code) fn blank<'t>(text: &'t str, macros: &FileMacros) -> Cow<'t, str> {
+/// A C or C++ file as its parse reads it.
+pub(in crate::code) struct Blanked<'t> {
+    /// Its text, the names of its macros (and a blanked call's arguments)
+    /// and the comments inside a `#define` blanked; borrowed when nothing
+    /// is.
+    pub(in crate::code) text: Cow<'t, str>,
+    /// Where the code after each blanked static macro starts, in order:
+    /// the definitions it marks private start there or hold the place
+    /// before their name.
+    pub(in crate::code) private: Vec<usize>,
+}
+
+/// The index of `text`, a file of `language`, C or C++, that blanks
+/// `macros`, built into `scopes`.
+pub(in crate::code) fn index(
+    language: &Language,
+    text: &str,
+    macros: &FileMacros,
+    scopes: ScopeTree,
+) -> Result<FileIndex, IndexFault> {
+    let blanked = blank(text, macros);
+    let source = Source {
+        parsed: &blanked.text,
+        written: text,
+        private: &blanked.private,
+    };
+    general::index(language, &source, scopes)
+}
+
+/// `text`, a C or C++ file, as its parse reads it with `macros` blanked.
+pub(in crate::code) fn blank<'t>(text: &'t str, macros: &FileMacros) -> Blanked<'t> {
     let mut blanks = Blanks {
         text,
         macros,
@@ -379,31 +443,55 @@ pub(in crate::code) fn blank<'t>(text: &'t str, macros: &FileMacros) -> Cow<'t, 
     lex(text, true, |item| blanks.take(item));
     blanks.abandon();
     if blanks.found.is_empty() {
-        return Cow::Borrowed(text);
+        return Blanked {
+            text: Cow::Borrowed(text),
+            private: Vec::new(),
+        };
     }
     let mut out = String::with_capacity(text.len());
-    let mut at = 0;
+    let (mut at, mut private_ends) = (0, Vec::new());
     for (range, fill) in blanks.found {
         out.push_str(text.get(at..range.start).unwrap_or_default());
-        let written = text.get(range.start..range.end).unwrap_or_default();
-        if fill == Fill::Static {
-            out.push_str(STATIC);
-        }
-        let kept = written.char_indices().skip(match fill {
-            Fill::Static => STATIC.len(),
-            Fill::Spaces | Fill::Joined => 0,
-        });
-        for (_, c) in kept {
+        for c in text.get(range.start..range.end).unwrap_or_default().chars() {
             match (c, fill) {
-                ('\n', Fill::Spaces | Fill::Static) => out.push('\n'),
+                ('\n', Fill::Spaces | Fill::Private) => out.push('\n'),
                 // Any other character, and a comment's line break.
                 _ => out.extend(std::iter::repeat_n(' ', c.len_utf8())),
             }
         }
+        if fill == Fill::Private {
+            private_ends.push(range.end);
+        }
         at = range.end;
     }
     out.push_str(text.get(at..).unwrap_or_default());
-    Cow::Owned(out)
+    let private = code_after(&out, &private_ends);
+    Blanked {
+        text: Cow::Owned(out),
+        private,
+    }
+}
+
+/// Where the first item of `text` but a comment or a directive after each
+/// of `ends` starts, each place once, in one pass.
+fn code_after(text: &str, ends: &[usize]) -> Vec<usize> {
+    let mut found: Vec<usize> = Vec::new();
+    if ends.is_empty() {
+        return found;
+    }
+    let mut ends = ends.iter().peekable();
+    lex(text, true, |item| {
+        if matches!(item, Item::Comment { .. } | Item::Directive { .. }) {
+            return;
+        }
+        let start = item.start();
+        while ends.next_if(|end| **end <= start).is_some() {
+            if found.last() != Some(&start) {
+                found.push(start);
+            }
+        }
+    });
+    found
 }
 
 /// The ranges a blank finds, in order, as the lexer hands it the items of
@@ -446,9 +534,9 @@ impl Blanks<'_, '_> {
             Item::Directive {
                 start,
                 end,
-                continued_comments: true,
+                inner_comments: true,
             } => {
-                for comment in continued_comments(self.text.get(start..end).unwrap_or_default()) {
+                for comment in inner_comments(self.text.get(start..end).unwrap_or_default()) {
                     let range = start + comment.start..start + comment.end;
                     self.found.push((range, Fill::Joined));
                 }
@@ -484,7 +572,7 @@ impl Blanks<'_, '_> {
 /// not.
 fn macros_fill(macros: &FileMacros, name: &str) -> Option<Fill> {
     match (macros.names.contains(name), macros.statics.contains(name)) {
-        (true, true) => Some(Fill::Static),
+        (true, true) => Some(Fill::Private),
         (true, false) => Some(Fill::Spaces),
         (false, _) => None,
     }
@@ -534,22 +622,18 @@ impl Call {
     }
 }
 
-/// The comments of `directive` to blank, when it is a `#define` continued
-/// over lines: each before its last continuation. One after it is left,
-/// since blanked it would leave the blanks tree-sitter-c reads a body's
-/// end at.
-fn continued_comments(directive: &str) -> Vec<Range<usize>> {
-    let mut found = Vec::new();
+/// The comments of `directive` to blank, when it is a `#define`: each a
+/// token of it follows. A trailing one is left, since blanked it would
+/// leave the blanks tree-sitter-c reads a body's end at.
+fn inner_comments(directive: &str) -> Vec<Range<usize>> {
+    let (mut found, mut trailing) = (Vec::new(), Vec::new());
     if define_of(directive).is_none() {
         return found;
     }
-    let last = directive.rfind('\\').unwrap_or(0);
-    lex(directive, false, |item| {
-        if let Item::Comment { start, end } = item
-            && end <= last
-        {
-            found.push(start..end);
-        }
+    lex(directive, false, |item| match item {
+        Item::Comment { start, end } => trailing.push(start..end),
+        Item::Token { .. } | Item::Identifier { .. } => found.append(&mut trailing),
+        Item::Directive { .. } => {}
     });
     found
 }

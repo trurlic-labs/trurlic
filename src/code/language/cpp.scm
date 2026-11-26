@@ -64,8 +64,8 @@
 ; Functions with a return type: defined, or declared at a namespace's top
 ; or in a class; a method in a class. The span is the definition or the
 ; declaration itself, its name met through the declarators real code
-; writes (a pointer, a reference or a function pointer returned, and a
-; name in parentheses, `int (max)(int, int)`). A declarator in
+; writes (a pointer, a reference or a function pointer returned, to two
+; levels, and a name in parentheses, `int (max)(int, int)`). A declarator in
 ; parentheses is a function pointer's, and one holding a brace or a
 ; semicolon a misparse's.
 ((function_definition type: (_)
@@ -75,7 +75,8 @@
                 (_ declarator: (function_declarator declarator: (_) @name))
                 (reference_declarator (function_declarator declarator: (_) @name))
                 (_ declarator: (_ declarator: (function_declarator declarator: (_) @name)))
-                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name))))]) @definition
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name))))
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name)))))))]) @definition
   (#not-match? @name "^[(]|[{};]")
   (#set! kind "function")
   (#set! kind.in "class:method struct:method union:method")
@@ -89,14 +90,16 @@
                 (_ declarator: (function_declarator declarator: (parenthesized_declarator [(identifier) (qualified_identifier)] @name)))
                 (_ declarator: (function_declarator declarator: (_) @name))
                 (reference_declarator (function_declarator declarator: (_) @name))
-                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name))))])
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name))))
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name)))))))])
   (field_declaration type: (_)
    declarator: [(function_declarator declarator: (_) @name)
                 (function_declarator declarator: (parenthesized_declarator (field_identifier) @name))
                 (_ declarator: (function_declarator declarator: (parenthesized_declarator (field_identifier) @name)))
                 (_ declarator: (function_declarator declarator: (_) @name))
                 (reference_declarator (function_declarator declarator: (_) @name))
-                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name))))])] @definition
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name))))
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name)))))))])] @definition
   (#not-match? @name "^[(]|[{};]")
   (#set! kind "function")
   (#set! kind.in "class:method struct:method union:method")
@@ -104,6 +107,20 @@
   (#set! within "top module class struct union")
   (#set! name.skip "template_argument_list")
   (#set! definition.wrap "template_declaration")
+  (#set! visibility "public"))
+
+; A prototype whose name stands in parentheses after a built-in type,
+; which the C++ grammar reads as a call when a parameter's type is one it
+; does not know (`void (lua_close) (lua_State *L);`): no statement stands
+; at a namespace's top, so the call is that prototype.
+((expression_statement
+   (call_expression
+     function: (call_expression
+       function: (primitive_type)
+       arguments: (argument_list . (identifier) @name .)))) @definition
+  (#set! kind "function")
+  (#set! container "false")
+  (#set! within "top module")
   (#set! visibility "public"))
 
 ; With no return type: a constructor, a destructor or a conversion,

@@ -40,8 +40,8 @@ impl Blobs<'_> {
                 Some((FileKind::of(&path)?, revision, path, bytes))
             })
             .collect();
-        let indexed = self.indexer.map(&blobs, |worker, (kind, _, _, bytes)| {
-            match worker.index_alone(*kind, bytes) {
+        let indexed = self.indexer.map(&blobs, |worker, (kind, _, path, bytes)| {
+            match worker.index_alone(path, *kind, bytes) {
                 Ok(indexed) => indexed.map_err(FileFault::Index),
                 Err(fault) => Err(FileFault::Read(fault)),
             }

@@ -12,10 +12,15 @@
 //! A file is read in one bounded read, refused past
 //! [`MAX_SOURCE_FILE_BYTES`] and when it is no regular file, and indexed
 //! from the cache when an entry holds its key; a C or C++ file's key holds
-//! the part of the tree's blank set it writes, which its lexical pass,
-//! cached by content, says (`lexical.rs`). Indexing runs in parallel, on
-//! threads the call starts and ends (`indexer.rs`); a file that vanishes
-//! between the walk and the read is absent. The misses of every tree a call reads are written to
+//! the part of the tree's blank sets it writes, which its lexical pass,
+//! cached by content, says (`lexical.rs`). Every read of a call, of the
+//! calling tree, another worktree or git's history, and the recheck of a
+//! repair under the write lock, goes through one [`Reads`], made by one
+//! function from the calling tree's walk and headers, so a file is judged
+//! against the same sets whichever read takes it. Indexing runs in
+//! parallel, on threads the call starts and ends (`indexer.rs`); a file
+//! that vanishes between the walk and the read is absent. The misses of
+//! every tree a call reads are written to
 //! the cache once, after
 //! the call's own work, under the exclusive lock when it is free: a busy
 //! lock skips the write, since the cache is never authoritative.
@@ -46,7 +51,7 @@ use crate::store::{Anchor, Decision, Store, SymbolsKey};
 use blobs::Blobs;
 use cache::Content;
 use indexer::{Indexer, Worker};
-use lexical::{Cached, Header};
+use lexical::Cached;
 use walk::Probe;
 
 /// The largest source file the shell reads: the largest of any kind the
@@ -74,7 +79,7 @@ pub(crate) fn checked_findings<'s>(
     if decisions.is_empty() {
         return CheckedFindings::default();
     }
-    let mut reads = Reads::new();
+    let mut reads = Reads::of_tree(store);
     let facts = calling_tree(store, &decisions, &mut reads);
     let here = Here::of(&decisions, &facts);
     let mut asked = Asked::new(here.unresolved(&decisions));
@@ -98,19 +103,20 @@ pub(crate) fn tree_findings<'s>(
     if decisions.is_empty() {
         return Vec::new();
     }
-    let mut reads = Reads::new();
+    let mut reads = Reads::of_tree(store);
     let facts = calling_tree(store, &decisions, &mut reads);
     reads.write(store);
     anchors::unasked(&decisions, &Here::of(&decisions, &facts))
 }
 
 /// Keep of `repairs`, a map from stale anchor to repair read before the
-/// write lock, each that still holds in the tree at `code_root`, read under
-/// the lock from the files the repairs name alone, with no git: its stale
-/// anchor names nothing there and its repair resolves. Give each repair
-/// dropped, by its stale anchor, with why.
+/// write lock, each that still holds in the tree at `store`'s code root,
+/// read under the lock from the files the repairs name alone, as the tree
+/// read judges them, with no git: its stale anchor names nothing there and
+/// its repair resolves. Give each repair dropped, by its stale anchor,
+/// with why.
 pub(crate) fn still_holding(
-    code_root: &Path,
+    store: &Store,
     repairs: &mut BTreeMap<Anchor, Anchor>,
 ) -> BTreeMap<Anchor, String> {
     if repairs.is_empty() {
@@ -120,7 +126,7 @@ pub(crate) fn still_holding(
         .iter()
         .flat_map(|(from, to)| [from.file(), to.file()])
         .collect();
-    let facts = read_alone(code_root, paths);
+    let facts = read_alone(store, paths);
     let mut dropped = BTreeMap::new();
     repairs.retain(|from, to| {
         let stale = matches!(
@@ -139,39 +145,13 @@ pub(crate) fn still_holding(
     dropped
 }
 
-/// The facts of `paths` in the tree at `code_root`, each file read and
-/// indexed alone, with no cache and no other file of the tree.
-fn read_alone(code_root: &Path, paths: BTreeSet<&str>) -> CodeFacts {
-    let (mut entries, to_read) = probe_anchored(
-        code_root,
-        paths.into_iter(),
-        &BTreeMap::new(),
-        Scope::Anchored,
-    );
-    let to_read: Vec<(String, FileKind)> = to_read.into_iter().collect();
-    let indexer = Indexer::new();
-    let read = indexer.map(&to_read, |worker, (path, kind)| {
-        let bytes = match read_source(&code_root.join(path)) {
-            Ok(bytes) => bytes,
-            Err(Gone) => return None,
-            Err(Faulty(fault)) => return Some(Err(FileFault::Read(fault))),
-        };
-        Some(match worker.index_alone(*kind, &bytes) {
-            Ok(indexed) => indexed.map_err(FileFault::Index),
-            Err(fault) => Err(FileFault::Read(fault)),
-        })
-    });
-    let read = read.unwrap_or_else(|fault| {
-        to_read
-            .iter()
-            .map(|_| Some(Err(FileFault::Read(fault))))
-            .collect()
-    });
-    for ((path, kind), index) in to_read.into_iter().zip(read) {
-        if let Some(index) = index {
-            entries.insert(path, Entry::File { kind, index });
-        }
-    }
+/// The facts of `paths` in the tree at `store`'s code root, read through
+/// the reads of the tree, with no other file of it; the cache is read, not
+/// written, since the caller holds the write lock.
+fn read_alone(store: &Store, paths: BTreeSet<&str>) -> CodeFacts {
+    let mut reads = Reads::of_tree(store);
+    let root = store.code_root();
+    let (entries, _) = read_tree(store, root, Scope::Anchored, paths.into_iter(), &mut reads);
     CodeFacts::new(entries, BTreeSet::new())
 }
 
@@ -289,8 +269,9 @@ fn read_paths(
 /// Which files a gather reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scope {
-    /// Every source the walk takes, the anchored paths, and the manifests
-    /// above an anchored Rust file the walk does not take.
+    /// Every source the walk of the calling tree took (the reads'), once a
+    /// call, the anchored paths, and the manifests above an anchored Rust
+    /// file the walk does not take.
     Tree,
     /// The anchored paths alone.
     Anchored,
@@ -305,13 +286,9 @@ fn read_tree<'a>(
     anchored: impl Iterator<Item = &'a str>,
     reads: &mut Reads,
 ) -> (BTreeMap<String, Entry>, BTreeSet<String>) {
-    let (walked, headers) = match scope {
-        Scope::Tree => {
-            let walked: BTreeMap<String, FileKind> = walk::tree_sources(root).into_iter().collect();
-            let headers = lexical::read_headers(store, reads, root, &walked);
-            (walked, headers)
-        }
-        Scope::Anchored => (BTreeMap::new(), BTreeMap::new()),
+    let walked = match scope {
+        Scope::Tree => std::mem::take(&mut reads.walked),
+        Scope::Anchored => BTreeMap::new(),
     };
     let (mut entries, anchored) = probe_anchored(root, anchored, &walked, scope);
     // clone: the facts tell the files the walk took from those an anchor
@@ -325,8 +302,7 @@ fn read_tree<'a>(
         misses: &reads.misses,
     };
     let read = reads.indexer.map(&to_read, |worker, (path, kind)| {
-        let header = headers.get(path).copied();
-        read_and_index(&cached, worker, (&root.join(path), *kind), header)
+        read_and_index(&cached, worker, (root, path, *kind))
     });
     let read = read.unwrap_or_else(|fault| {
         to_read
@@ -394,49 +370,28 @@ struct Used {
     miss: Option<Vec<u8>>,
 }
 
-/// Read the file at `path`, of `kind`, and index it, from the cache when
-/// it holds the index; `None` when the file is gone. A header the first
-/// step read (`header`) is read again only when the cache lacks its index.
+/// Read the file at `path` under `root`, of `kind`, and index it, from
+/// the cache when it holds the index; `None` when the file is gone.
 fn read_and_index(
     cached: &Cached<'_>,
     worker: &Worker<'_>,
-    (path, kind): (&Path, FileKind),
-    header: Option<Header>,
+    (root, path, kind): (&Path, &str, FileKind),
 ) -> Option<Sourced> {
-    if let Some(sourced) = header.and_then(|header| cached_header(cached, worker, kind, header)) {
-        return Some(sourced);
-    }
-    match read_source(path) {
-        Ok(bytes) => Some(index_bytes(cached, worker, kind, &bytes)),
+    match read_source(&root.join(path)) {
+        Ok(bytes) => Some(index_bytes(cached, worker, (path, kind), &bytes)),
         Err(Gone) => None,
         Err(Faulty(fault)) => Some(Sourced::Fault(fault)),
     }
 }
 
-/// The index of `header`, a header of `kind` the first step read, from
-/// the cache alone; `None` when it lacks the header's lexical pass or its
-/// index.
-fn cached_header(
+/// The index of `bytes`, the file at `path` of `kind`: the cache's, else
+/// built.
+fn index_bytes(
     cached: &Cached<'_>,
     worker: &Worker<'_>,
-    kind: FileKind,
-    header: Header,
-) -> Option<Sourced> {
-    let lexed = cached.lexed(header.content, header.bytes)?;
-    let key = cache::key(kind, header.content, &worker.tree().of_file(&lexed));
-    let indexed = cached.index(key, kind, header.bytes)?;
-    Some(Sourced::Indexed {
-        indexed: Box::new(indexed),
-        index: Used { key, miss: None },
-        lexed: Some(Used {
-            key: cache::lexed_key(header.content),
-            miss: None,
-        }),
-    })
-}
-
-/// The index of `bytes`, a file of `kind`: the cache's, else built.
-fn index_bytes(cached: &Cached<'_>, worker: &Worker<'_>, kind: FileKind, bytes: &[u8]) -> Sourced {
+    (path, kind): (&str, FileKind),
+    bytes: &[u8],
+) -> Sourced {
     let content = Content::of(bytes);
     let (macros, lexed) = match kind.blanks_macros() {
         true => {
@@ -445,7 +400,7 @@ fn index_bytes(cached: &Cached<'_>, worker: &Worker<'_>, kind: FileKind, bytes: 
                 key: found.key,
                 miss: found.miss,
             };
-            (worker.tree().of_file(&found.lexed), Some(lexed))
+            (worker.tree().of_file(path, &found.lexed), Some(lexed))
         }
         false => (FileMacros::default(), None),
     };
@@ -508,25 +463,34 @@ fn read_source(path: &Path) -> Result<Vec<u8>, Unread> {
     }
 }
 
-/// What a call's reads share: the indexer its files are indexed through,
-/// and what the reads give the cache, the entries it lacked, by key, so
-/// two files of one content are one entry, and every key read, which
-/// bounds the cache. One call fills it once, with the keys of every tree
-/// it read, so a few paths of another worktree never prune the entries of
-/// the calling tree.
+/// What a call's reads share: the calling tree's walk, until its read
+/// takes it; the indexer its files are indexed through, which holds the
+/// calling tree's blank sets; and what the reads give the cache, the
+/// entries it lacked, by key, so two files of one content are one entry,
+/// and every key read, which bounds the cache. One call fills it once,
+/// with the keys of every tree it read, so a few paths of another worktree
+/// never prune the entries of the calling tree.
 struct Reads {
+    walked: BTreeMap<String, FileKind>,
     indexer: Indexer,
     misses: BTreeMap<SymbolsKey, Vec<u8>>,
     live: BTreeSet<SymbolsKey>,
 }
 
 impl Reads {
-    fn new() -> Self {
-        Self {
+    /// The reads of a call in the tree at `store`'s code root: its walk,
+    /// and its headers read for the indexer's blank sets. The one maker of
+    /// an indexer, so no file is ever indexed against other sets.
+    fn of_tree(store: &Store) -> Self {
+        let root = store.code_root();
+        let mut reads = Self {
+            walked: walk::tree_sources(root).into_iter().collect(),
             indexer: Indexer::new(),
             misses: BTreeMap::new(),
             live: BTreeSet::new(),
-        }
+        };
+        lexical::read_headers(store, &mut reads, root);
+        reads
     }
 
     /// The entry of a file of `kind` that `read` gave, the cache entries

@@ -10,10 +10,11 @@
 //! indexed at once hold at most [`MAX_BYTES_INDEXED_AT_ONCE`] bytes between
 //! them. Every thread has a stack of [`WORKER_STACK_BYTES`].
 //!
-//! A C or C++ file is indexed against the part of its tree's blank set
-//! it writes, the set a fact of the tree's headers: the indexer holds the
-//! calling tree's, taken once a call, and every file the call indexes, in
-//! that tree, another worktree or git's history, is read against it.
+//! A C or C++ file is indexed against the part of its tree's blank sets
+//! it writes, the sets a fact of the tree's headers: the indexer holds the
+//! calling tree's, taken once a call before any file is indexed, and every
+//! file the call indexes, in that tree, another worktree or git's history,
+//! is read against them.
 
 use std::error::Error;
 use std::io::{self, ErrorKind};
@@ -59,10 +60,14 @@ impl Indexer {
         }
     }
 
-    /// Take the tree's blank set from `headers`, the `#define`s of the
-    /// calling tree's headers.
-    pub(super) fn take_headers(&mut self, headers: &[Defines]) {
-        self.tree = BlankMacros::of(headers);
+    /// Take the tree's blank sets from `headers`, the paths and the
+    /// `#define`s of the calling tree's headers.
+    pub(super) fn take_headers(&mut self, headers: &[(String, Defines)]) {
+        self.tree = BlankMacros::of(
+            headers
+                .iter()
+                .map(|(path, defines)| (path.as_str(), defines)),
+        );
     }
 
     /// What `each` gives of each of `items`, in their order, run in
@@ -127,11 +132,16 @@ impl Worker<'_> {
         self.tree
     }
 
-    /// The index of `bytes`, a file of `kind`, its blank set taken from a
-    /// lexical pass over them here: a file no cache holds.
-    pub(super) fn index_alone(&self, kind: FileKind, bytes: &[u8]) -> Result<Indexed, ReadFault> {
+    /// The index of `bytes`, the file at `path` of `kind`, its blank set
+    /// taken from a lexical pass over them here: a file no cache holds.
+    pub(super) fn index_alone(
+        &self,
+        path: &str,
+        kind: FileKind,
+        bytes: &[u8],
+    ) -> Result<Indexed, ReadFault> {
         let macros = match kind.blanks_macros() {
-            true => self.tree.of_file(&code::lexed(bytes)),
+            true => self.tree.of_file(path, &code::lexed(bytes)),
             false => FileMacros::default(),
         };
         self.index(kind, bytes, &macros)

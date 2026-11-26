@@ -35,6 +35,7 @@ use tree_sitter::Node;
 use super::index::{FileIndex, IndexFault, ModuleFile};
 use super::kinds::{DefinitionKind, Role, Visibility, What};
 use super::scope::{ScopeId, ScopeTree};
+use super::span::Lines;
 use super::symbol::Segment;
 use super::syntax::{self, Lexicon, text_of};
 use super::tree::TreeIndex;
@@ -75,7 +76,12 @@ pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFau
     let silent = silent::silent_tokens(tree.root_node());
     let mut walk = Walk {
         text,
-        build: TreeIndex::new(text, Leaves::of(&tree, text, &LEXICON, &silent), scopes),
+        build: TreeIndex::new(
+            text,
+            Lines::of(text.as_bytes()),
+            Leaves::of(&tree, text, &LEXICON, &silent),
+            scopes,
+        ),
         reexports: Vec::new(),
     };
     walk.run(tree.root_node())?;

@@ -39,6 +39,7 @@ use super::kinds::{Role, Visibility};
 use super::language::Language;
 use super::query::{Capture, Definer, Rules};
 use super::scope::ScopeTree;
+use super::span::Lines;
 use super::syntax;
 use super::tree::TreeIndex;
 use super::units::{Leaves, NodeMarks};
@@ -50,12 +51,34 @@ use frame::{Frame, VisibilityMark, Waiting};
 /// more is refused, not read in part.
 pub(super) const MATCH_LIMIT: u32 = 256;
 
-/// The index of `text`, a file of `language`, built into `scopes`.
+/// A file as the resolver reads it: the text its grammar parses and its
+/// hash reads, the text as written, of the same length, whose lines a
+/// span counts, and the places a rewrite before the parse marked private,
+/// in order (`language/c_family.rs`).
+pub(super) struct Source<'t> {
+    pub(super) parsed: &'t str,
+    pub(super) written: &'t str,
+    pub(super) private: &'t [usize],
+}
+
+impl<'t> Source<'t> {
+    /// `text` read as written.
+    pub(super) const fn plain(text: &'t str) -> Self {
+        Self {
+            parsed: text,
+            written: text,
+            private: &[],
+        }
+    }
+}
+
+/// The index of `source`, a file of `language`, built into `scopes`.
 pub(super) fn index(
     language: &Language,
-    text: &str,
+    source: &Source<'_>,
     mut scopes: ScopeTree,
 ) -> Result<FileIndex, IndexFault> {
+    let text = source.parsed;
     for bound in language.before_parse {
         bound(text)?;
     }
@@ -66,7 +89,8 @@ pub(super) fn index(
         return Err(IndexFault::Grammar);
     };
     let tree = syntax::parse(text, &rules.grammar)?;
-    let found = collect(rules, &tree, text)?;
+    let mut found = collect(rules, &tree, text)?;
+    found.private = source.private;
     let placed = place::place(&found, &mut scopes)?;
     let mut marks = found.marks;
     for definition in &placed {
@@ -74,7 +98,8 @@ pub(super) fn index(
         marks.entry(definition.span.last).or_default().closes = true;
     }
     let (leaves, units) = Leaves::of_marked(&tree, (text, &language.lexicon), &marks);
-    let mut build = TreeIndex::new(text, leaves, scopes);
+    let lines = Lines::of(source.written.as_bytes());
+    let mut build = TreeIndex::new(text, lines, leaves, scopes);
     for definition in placed {
         let span = definition.span;
         build.define_units(
@@ -127,12 +152,14 @@ impl Extent {
     }
 }
 
-/// What the walk found of a definition's name node: the text of each of
-/// its segments, whether a test mark holds it, the innermost visibility
-/// mark that holds it, the visibility of the innermost
-/// `@visibility.within` mark that does, and of the label in force there.
+/// What the walk found of a definition's name node: where its first one
+/// starts, the text of each of its segments, whether a test mark holds
+/// it, the innermost visibility mark that holds it, the visibility of the
+/// innermost `@visibility.within` mark that does, and of the label in
+/// force there.
 #[derive(Debug, Clone)]
 struct NameNode {
+    start: usize,
     parts: Vec<String>,
     test: bool,
     visibility: Option<VisibilityMark>,
@@ -172,7 +199,7 @@ struct Candidate<'r> {
 /// What the walk found: the candidates, the nodes captured as unnamed
 /// scopes and, by id, those captured as no scope, how the hash takes each
 /// marked node, by its id, and the names an `@export.name` capture
-/// spells.
+/// spells; and the places the source marks private.
 #[derive(Default)]
 struct Found<'r, 't> {
     candidates: Vec<Candidate<'r>>,
@@ -180,6 +207,7 @@ struct Found<'r, 't> {
     no_scope: BTreeSet<usize>,
     marks: BTreeMap<usize, NodeMarks>,
     exported: BTreeSet<&'t str>,
+    private: &'t [usize],
 }
 
 impl<'r> Found<'r, '_> {
@@ -202,6 +230,14 @@ impl<'r> Found<'r, '_> {
             return false;
         };
         self.exported.contains(one.as_str())
+    }
+
+    /// Whether a place the source marks private is at `start` or after it,
+    /// before `name`: a definition whose span starts at `start` and whose
+    /// name starts at `name` is private, as `static` would make it.
+    fn is_marked_private(&self, start: usize, name: usize) -> bool {
+        let at = self.private.partition_point(|place| *place < start);
+        self.private.get(at).is_some_and(|place| *place < name)
     }
 }
 
@@ -552,6 +588,7 @@ impl<'r> Walk<'r, '_> {
             Some(name) => name.parts.extend(parts),
             None => {
                 candidate.name = Some(NameNode {
+                    start: node.start_byte(),
                     parts,
                     test: frame.test,
                     visibility: frame.visibility,

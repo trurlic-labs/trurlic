@@ -113,6 +113,12 @@ impl Writer<'_> {
         &self.state
     }
 
+    /// The store it writes, for what a write reads beside the graph.
+    #[must_use]
+    pub const fn store(&self) -> &Store {
+        self.store
+    }
+
     /// The graph as the last commit left it on disk, the lock released: a
     /// read of it that holds no other reader or writer up.
     #[must_use]
