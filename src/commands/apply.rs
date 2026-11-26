@@ -81,8 +81,17 @@ fn print(answer: &Answer) -> Result<()> {
     if answer.more_duplicates > 0 {
         diag!(
             "warning: and {} more decision(s) with likely duplicates: `trurlic status --section \
-             lint` ranks the pairs, and {PAIRS_MORE}",
+             lint` lists the pairs, and {PAIRS_MORE}",
             answer.more_duplicates
+        );
+    }
+    if let Some(work) = &answer.unsought {
+        diag!(
+            "warning: no likely duplicate looked for: the lookup would do {} units of work, \
+             past the {} one call does; `trurlic status --section lint` lists the pairs a page \
+             at a time",
+            work.measured,
+            work.bound
         );
     }
     out!(

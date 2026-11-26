@@ -14,9 +14,9 @@ mod tests {
 
     /// What `lint` may name: the code index's facts, the graph's value
     /// types, the bar and the cache in memory its patterns search over, the
-    /// store's constant limits, a
-    /// path as a value whose file system methods it never calls, and the
-    /// thread pool's parallel iterators.
+    /// store's constant limits, and the thread pool's parallel iterators,
+    /// whose schedule no result depends on (the passes' tests at one thread
+    /// and eight hold it).
     const LINT: AllowList = AllowList {
         modules: &["lint", "code"],
         store_items: &[
@@ -30,7 +30,7 @@ mod tests {
             "Status",
             "limits",
         ],
-        std_items: &[("path", "PathBuf")],
+        std_items: &[],
         crates: &[],
         crate_items: &[("rayon", "prelude")],
     };

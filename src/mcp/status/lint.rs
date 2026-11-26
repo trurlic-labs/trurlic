@@ -1,15 +1,18 @@
 //! The `lint` section of `status`: what to read that refuses nothing, of
-//! three kinds, each gathered to the most a result can show and counted
-//! whole. Likely duplicate pairs come best first; quality findings, each
-//! rule of the bar a stored decision breaks, and the decisions with only
-//! file anchors come by decision name. The section lists them in that order
-//! of kinds, each kind fitted to the budget on its own (`fill`). The
-//! `[quality]` patterns are judged only for the section asked for alone
-//! (`patterns`).
+//! three kinds, each gathered to the most a result can show. Likely
+//! duplicate pairs come a page of probes at a time, best first within it;
+//! quality findings, each rule of the bar a stored decision breaks, and the
+//! decisions with only file anchors come by decision name. The section
+//! lists them in that order of kinds, each kind fitted to the budget on
+//! its own (`fill`). The `[quality]` patterns are judged only for the
+//! section asked for alone (`patterns`), which reads a page of the
+//! decisions from `from` on for the pairs and the patterns alike.
+
+use std::cmp::Reverse;
 
 use crate::budget::MAX_TOOL_RESULT_BYTES;
-use crate::lint::duplicates::{Among, Score, Similarity};
-use crate::lint::quality;
+use crate::lint::duplicates::{self, Among, PageEnd, Score, Similarity};
+use crate::lint::quality::{self, Found};
 use crate::mcp::spec::output::{Count, Nested, Str, Tag};
 use crate::mcp::spec::{Output, Shown, to_value};
 use crate::mcp::truncate::json_len;
@@ -21,24 +24,22 @@ use super::{Listed, Part};
 mod patterns;
 
 pub(super) use patterns::Patterns;
-pub(crate) use patterns::{Cut, PatternCounts};
+pub(crate) use patterns::{Cut, PatternCounts, Work};
 use patterns::{PAGE_MORE, Reading};
 
 /// What every surface says of the duplicate pairs a listing leaves out.
-pub(crate) const PAIRS_MORE: &str = "the section lists the best pairs; the ones left out rank \
-     at or below the last listed, and come into view as the listed ones are settled (merged, \
-     or revised apart)";
+pub(crate) const PAIRS_MORE: &str = "the section lists the pairs a page at a time, best first \
+     within it, each on the page of the later-named of its decisions the pass probed: \
+     `counts.lint.pairs.next` names where the next page starts";
 
 /// What the `lint` section says of what it leaves out, true of each kind.
-pub(super) const LINT_MORE: &str = "each kind lists what fits and `counts.lint` counts it \
-     whole: the duplicate pairs left out rank at or below the last listed; the \
-     quality findings and the \
-     decisions with only file anchors left out follow the last listed by decision \
-     name, and `section: \"lint\"` with `from` lists the quality findings from a \
-     decision on; they come into view as the listed ones are settled (pairs merged \
-     or revised apart, decisions brought to the bar or anchored to a symbol); \
-     `counts.lint.patterns` says which decisions the `[quality]` patterns did not \
-     read and how to read them";
+pub(super) const LINT_MORE: &str = "each kind lists what fits of the page and `counts.lint` \
+     counts it: the duplicate pairs and the quality findings of the decisions before the \
+     `next` that `counts.lint.pairs` or `counts.lint.patterns` names, which `section: \
+     \"lint\"` with `from` lists on from, a pair on the page of the later-named of its \
+     decisions the pass probed; the decisions with only file anchors left out follow the \
+     last listed by name; the listed ones settled (pairs merged or revised apart, decisions \
+     brought to the bar or anchored to a symbol), the rest come into view";
 
 /// A finding of `lint`: something to read, which refuses nothing.
 pub(crate) enum LintItem {
@@ -114,30 +115,17 @@ impl LintItem {
     }
 }
 
-/// How many findings of each kind there are, and how far the `[quality]`
-/// patterns were judged.
+/// How many findings of each kind the page holds, and how far the pairs'
+/// probes and the `[quality]` patterns read.
 pub(crate) struct LintCounts {
-    /// `None` when the pairs were not compared.
-    pub(crate) duplicates: Option<usize>,
-    /// The work that kept the pairs from being compared, when it did.
-    pub(crate) uncompared: Option<PairWork>,
+    pub(crate) duplicates: usize,
+    /// How far the pairs' probes read, when not to the last decision.
+    pub(crate) pairs: Option<PatternCounts>,
     pub(crate) quality: usize,
     pub(crate) file_anchors_only: usize,
     /// When `[quality]` has patterns.
     pub(crate) patterns: Option<PatternCounts>,
 }
-
-/// The work comparing the pairs would do, past the most one call does: no
-/// pair was compared.
-pub(crate) struct PairWork {
-    pub(crate) measured: usize,
-    pub(crate) bound: usize,
-}
-
-/// How the pairs a call left uncompared come to be compared.
-pub(crate) const UNCOMPARED_MORE: &str = "the pairs are compared when their pass's work, the \
-     posting entries it reads and eight for each pair it may test, stays within `bound`; \
-     `origin` compares only the pairs of the decisions recorded under it, for less work";
 
 /// The findings of each kind, in the section's order, and their counts.
 pub(super) struct Gathered<'s> {
@@ -145,11 +133,14 @@ pub(super) struct Gathered<'s> {
     pub(super) counts: LintCounts,
 }
 
-/// The findings of each kind before the budget cuts them, and the page of
-/// quality findings the patterns read, when they read one.
+/// The findings of each kind before the budget cuts them; the page of
+/// pairs and of quality findings, when each kind pages; and whether the
+/// call reads a page of the decisions from `from` on.
 pub(super) struct LintItems<'s> {
     pub(super) kinds: Vec<(LintKind, Listed<LintItem>)>,
     page: Option<Page<'s>>,
+    pairs: Option<PairPage<'s>>,
+    paged: bool,
 }
 
 /// A page of quality findings: how far the patterns read, and the
@@ -159,40 +150,64 @@ struct Page<'s> {
     decisions: Vec<&'s str>,
 }
 
+/// A page of likely duplicates: the pass's page, but its pairs, which
+/// the listing holds, and the probe of each pair listed, in order.
+struct PairPage<'s> {
+    page: duplicates::Page<'s>,
+    probes: Vec<&'s str>,
+}
+
 impl LintItems<'_> {
     /// The bytes the counts of a page may grow by once the budget cuts its
-    /// listing: a `next` and why, beside the counts the frame measured.
+    /// listing: a `next` and why for each kind that pages.
     pub(super) fn reserve(&self) -> usize {
-        self.page.as_ref().map_or(0, |_| {
-            MAX_NAME_BYTES + r#","next":"","why":"work_limit","more":"""#.len() + PAGE_MORE.len()
-        })
+        let one = MAX_NAME_BYTES
+            + r#","pairs":{"judged":0,"unjudged":0,"next":"","why":"work_limit","more":""}"#.len()
+            + PAGE_MORE.len();
+        usize::from(self.page.is_some()).saturating_add(1) * one
     }
 }
 
 /// Every finding of `state`, of the decisions recorded under `origin`
 /// when one is given (a pair when either decision is), each kind to the
-/// most one result can show; the quality findings of the patterns only
-/// when `patterns` is `Judged`, within a bound on the bytes they read, and
-/// then only of the decisions it reads from.
+/// most one result can show. A `lint` call alone reads a page of the
+/// decisions from `from` on by name: the pairs' probes within the work
+/// bound, and the patterns within the bytes bound; another call reads the
+/// pairs' first page, and the limits alone.
 pub(super) fn gather<'s>(
     state: &'s ProjectState,
     origin: Option<&str>,
     patterns: Patterns<'_>,
 ) -> Gathered<'s> {
     let under = |decision: &Decision| is_under(origin, decision);
-    let pairs = duplicates(state, origin, MAX_DUPLICATE_WORK);
+    let (pairs, duplicates) = pairs(state, origin, patterns.from());
     let limit = lint_limit(LintKind::Quality);
     let wanted = |name: &str, decision: &Decision| patterns.reads(name) && under(decision);
     let (mut shortfalls, reading) = patterns::shortfalls(state, patterns, limit, wanted);
     let page = reading.map(|reading| Page::of(reading, &mut shortfalls.first));
     let files = quality::file_anchors_only(state, lint_limit(LintKind::FileAnchorsOnly), under);
     let counts = LintCounts {
-        duplicates: pairs.total,
-        uncompared: pairs.uncompared,
+        duplicates: duplicates.total,
+        pairs: duplicates.counts,
         quality: shortfalls.total,
         file_anchors_only: files.total,
         patterns: page.as_ref().map(Page::counts),
     };
+    let items = LintItems {
+        kinds: kinds(duplicates.listed, shortfalls, files),
+        page,
+        pairs,
+        paged: patterns.pages(),
+    };
+    Gathered { items, counts }
+}
+
+/// The listing of each kind, in the section's order.
+fn kinds(
+    duplicates: Listed<LintItem>,
+    shortfalls: Found<(&str, Shortfall)>,
+    files: Found<&str>,
+) -> Vec<(LintKind, Listed<LintItem>)> {
     let quality = shortfalls
         .first
         .into_iter()
@@ -203,43 +218,240 @@ pub(super) fn gather<'s>(
         .map(|name| LintItem::FileAnchorsOnly {
             decision: name.to_owned(),
         });
-    let kinds = vec![
-        (
-            LintKind::Duplicate,
-            Listed::of(pairs.total.unwrap_or(0), pairs.items),
-        ),
+    vec![
+        (LintKind::Duplicate, duplicates),
         (LintKind::Quality, Listed::of(shortfalls.total, quality)),
         (LintKind::FileAnchorsOnly, Listed::of(files.total, anchored)),
-    ];
-    Gathered {
-        items: LintItems { kinds, page },
-        counts,
+    ]
+}
+
+/// The pairs' listing, its count and its counts when it reads no page.
+struct Duplicates {
+    listed: Listed<LintItem>,
+    total: usize,
+    counts: Option<PatternCounts>,
+}
+
+/// The page of likely duplicate pairs of `state` from `from` on, those
+/// touching a decision recorded under `origin` when one is given, within
+/// [`MAX_DUPLICATE_WORK`]; `None` when the decisions' texts alone pass it.
+fn pairs<'s>(
+    state: &'s ProjectState,
+    origin: Option<&str>,
+    from: Option<&str>,
+) -> (Option<PairPage<'s>>, Duplicates) {
+    let named: Vec<&str> = state
+        .decisions
+        .iter()
+        .filter(|(_, decision)| is_under(origin, decision))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    let among = match origin {
+        Some(_) => Among::Touching(&named),
+        None => Among::Every,
+    };
+    let similarity = match Similarity::of(state, MAX_DUPLICATE_WORK) {
+        Ok(similarity) => similarity,
+        Err(past) => {
+            let wanted = named
+                .iter()
+                .filter(|&&name| from.is_none_or(|from| name >= from));
+            return (None, unbuilt(wanted.count(), past.work));
+        }
+    };
+    let mut page = similarity.page(among, from, lint_limit(LintKind::Duplicate));
+    // Listed by probe until the budget has cut it, so a cut ends at one;
+    // best first once cut.
+    let mut pairs = std::mem::take(&mut page.pairs);
+    pairs.sort_by_key(|pair| (pair.probe, Reverse(pair.score), pair.first, pair.second));
+    let probes = pairs.iter().map(|pair| pair.probe).collect();
+    let items = pairs.into_iter().map(|pair| LintItem::Duplicate {
+        decision: pair.first.to_owned(),
+        other: pair.second.to_owned(),
+        score: pair.score.to_string(),
+    });
+    let pairs = PairPage { page, probes };
+    let duplicates = Duplicates {
+        listed: Listed::of(pairs.page.total, items),
+        total: pairs.page.total,
+        counts: pairs.counts(None),
+    };
+    (Some(pairs), duplicates)
+}
+
+/// No pair compared: the decisions' texts alone, `work`, pass the bound,
+/// and `wanted` decisions went unread.
+fn unbuilt(wanted: usize, work: usize) -> Duplicates {
+    let counts = PatternCounts {
+        judged: 0,
+        unjudged: wanted,
+        next: None,
+        cut: Some(Cut::Unbuilt(Work {
+            measured: work,
+            bound: MAX_DUPLICATE_WORK,
+            unit: "units",
+        })),
+    };
+    Duplicates {
+        listed: Listed::of(0, []),
+        total: 0,
+        counts: Some(counts),
     }
 }
 
+impl<'s> PairPage<'s> {
+    /// Where the page of pairs ends once the budget kept the first `kept`
+    /// of its listing, by probe: at the probe of the first pair it left
+    /// out, or after the page's first probe when that probe's pairs alone
+    /// pass the room, else where the pass ended.
+    fn end(&self, kept: usize) -> Option<(&'s str, PageEnd)> {
+        let Some(&cut) = self.probes.get(kept) else {
+            return self.page.next;
+        };
+        if self.probes.first() != Some(&cut) {
+            return Some((cut, PageEnd::Pairs));
+        }
+        let after = self.probes.iter().copied().find(|&probe| probe > cut);
+        after
+            .map(|probe| (probe, PageEnd::Pairs))
+            .or(self.page.next)
+    }
+
+    /// Cut `part`, the pairs the budget kept, to the probes before `end`,
+    /// then list them best first: the count of the page's pairs before it.
+    fn cut(&self, part: &mut Part<LintItem>, end: Option<&str>) -> usize {
+        let before = |probe: &&str| end.is_none_or(|end| *probe < end);
+        let mut probes = self.probes.iter();
+        part.items.retain(|_| probes.next().is_some_and(before));
+        part.items.sort_by(|a, b| best_first(a).cmp(&best_first(b)));
+        let after = self.probes.iter().filter(|probe| !before(probe)).count();
+        let total = match self.probes.iter().any(before) {
+            true => self.page.total.saturating_sub(after),
+            false => 0,
+        };
+        part.total = total;
+        part.omitted = total.saturating_sub(part.items.len());
+        total
+    }
+
+    /// The counts of the page ended at `end`, its own end when `None`:
+    /// none when it read to the last probe.
+    fn counts(&self, end: Option<(&str, PageEnd)>) -> Option<PatternCounts> {
+        let (next, why) = end.or(self.page.next)?;
+        let judged = self.page.run.partition_point(|&probe| probe < next);
+        let cut = match why {
+            PageEnd::Work if self.page.next.is_some_and(|(own, _)| own == next) => {
+                Cut::WorkLimit(Work {
+                    measured: self.page.work,
+                    bound: MAX_DUPLICATE_WORK,
+                    unit: "units",
+                })
+            }
+            PageEnd::Work | PageEnd::Pairs => Cut::Page,
+        };
+        Some(PatternCounts {
+            judged,
+            unjudged: self.page.probes.saturating_sub(judged),
+            next: Some(next.to_owned()),
+            cut: Some(cut),
+        })
+    }
+}
+
+/// A duplicate's place in a listing best first, then by names: its score,
+/// six fixed decimals, compared as text.
+fn best_first(item: &LintItem) -> (Reverse<&str>, &str, &str) {
+    match item {
+        LintItem::Duplicate {
+            decision,
+            other,
+            score,
+        } => (Reverse(score), decision, other),
+        LintItem::Quality(_) | LintItem::FileAnchorsOnly { .. } => (Reverse(""), "", ""),
+    }
+}
+
+/// The part of `parts` of the kind `wanted`.
+fn part(parts: &mut [(LintKind, Part<LintItem>)], wanted: LintKind) -> Option<&mut Part<LintItem>> {
+    parts
+        .iter_mut()
+        .find(|(kind, _)| *kind == wanted)
+        .map(|(_, part)| part)
+}
+
 /// The `lint` section of `items`, each kind fitted by `fit`. A page of
-/// quality findings ends at a decision's boundary, and `counts` names the
-/// decision where the next page starts.
+/// pairs ends at a probe, a page of quality findings at a decision; a
+/// call that reads a page ends both at the earlier, and `counts` names
+/// the decision where the next page starts.
 pub(super) fn fitted(
     items: LintItems<'_>,
     fit: impl Fn(LintKind, Listed<LintItem>) -> Part<LintItem>,
-    mut counts: Option<&mut LintCounts>,
+    counts: Option<&mut LintCounts>,
 ) -> Part<LintItem> {
-    let LintItems { kinds, page } = items;
+    let LintItems {
+        kinds,
+        page,
+        pairs,
+        paged,
+    } = items;
+    let mut parts: Vec<(LintKind, Part<LintItem>)> = kinds
+        .into_iter()
+        .map(|(kind, listed)| (kind, fit(kind, listed)))
+        .collect();
+    let pairs_end = pairs
+        .as_ref()
+        .zip(part(&mut parts, LintKind::Duplicate))
+        .and_then(|(pairs, part)| pairs.end(part.items.len()));
+    let quality_end = page
+        .as_ref()
+        .zip(part(&mut parts, LintKind::Quality))
+        .and_then(|(page, part)| page.end(part));
+    let end = earlier(pairs_end, quality_end.filter(|_| paged));
+    let duplicates = pairs.as_ref().zip(part(&mut parts, LintKind::Duplicate));
+    let duplicates = duplicates.map(|(pairs, part)| pairs.cut(part, end.map(|(name, _)| name)));
+    if paged && let (Some((end, _)), Some(part)) = (end, part(&mut parts, LintKind::Quality)) {
+        part.items
+            .retain(|item| quality(item).is_none_or(|found| found.decision.as_str() < end));
+        part.omitted = part.total.saturating_sub(part.items.len());
+    }
+    if let Some(counts) = counts {
+        if let Some(total) = duplicates {
+            counts.duplicates = total;
+            counts.pairs = pairs.as_ref().and_then(|pairs| pairs.counts(end));
+        }
+        if let Some(page) = &page {
+            let listed_to = match (quality_end, end.filter(|_| paged)) {
+                (Some(own), Some((end, _))) => Some(own.min(end)),
+                (own, end) => own.or(end.map(|(end, _)| end)),
+            };
+            counts.patterns = Some(page.reading.counts(listed_to));
+        }
+    }
+    joined(parts)
+}
+
+/// Where a page ends: the earlier of the end of its pairs and of its
+/// quality findings, when either ends.
+fn earlier<'a>(
+    pairs: Option<(&'a str, PageEnd)>,
+    quality: Option<&'a str>,
+) -> Option<(&'a str, PageEnd)> {
+    match (pairs, quality) {
+        (Some((pairs, _)), Some(quality)) if quality < pairs => Some((quality, PageEnd::Pairs)),
+        (Some(end), _) => Some(end),
+        (None, quality) => quality.map(|quality| (quality, PageEnd::Pairs)),
+    }
+}
+
+/// The section of `parts`, in their order.
+fn joined(parts: Vec<(LintKind, Part<LintItem>)>) -> Part<LintItem> {
     let mut section = Part {
         total: 0,
         items: Vec::new(),
         omitted: 0,
         more: None,
     };
-    for (kind, listed) in kinds {
-        let mut part = fit(kind, listed);
-        if let (LintKind::Quality, Some(page)) = (kind, &page) {
-            let listed_to = page.end(&mut part);
-            if let Some(counts) = counts.as_deref_mut() {
-                counts.patterns = Some(page.reading.counts(listed_to));
-            }
-        }
+    for (_, part) in parts {
         section.total += part.total;
         section.omitted += part.omitted;
         section.items.extend(part.items);
@@ -294,55 +506,6 @@ impl<'s> Page<'s> {
 /// Whether `decision` is recorded under `origin`: every one when `None`.
 fn is_under(origin: Option<&str>, decision: &Decision) -> bool {
     origin.is_none_or(|origin| decision.origin.as_deref() == Some(origin))
-}
-
-/// The likely duplicate pairs of a call, or the work that kept them from
-/// being compared.
-struct Duplicates {
-    /// `None` when they were not compared.
-    total: Option<usize>,
-    uncompared: Option<PairWork>,
-    /// The best, as many as one result can show.
-    items: Vec<LintItem>,
-}
-
-/// The pairs of `state`, those touching a decision recorded under
-/// `origin` when one is given, compared when their work is within `bound`.
-fn duplicates(state: &ProjectState, origin: Option<&str>, bound: usize) -> Duplicates {
-    let named: Vec<&str> = state
-        .decisions
-        .iter()
-        .filter(|(_, decision)| is_under(origin, decision))
-        .map(|(name, _)| name.as_str())
-        .collect();
-    let among = match origin {
-        Some(_) => Among::Touching(&named),
-        None => Among::Every,
-    };
-    let limit = lint_limit(LintKind::Duplicate);
-    match Similarity::of(state).pairs(among, limit, bound) {
-        Ok(ranked) => Duplicates {
-            total: Some(ranked.total),
-            uncompared: None,
-            items: ranked
-                .best
-                .into_iter()
-                .map(|pair| LintItem::Duplicate {
-                    decision: pair.first.to_owned(),
-                    other: pair.second.to_owned(),
-                    score: pair.score.to_string(),
-                })
-                .collect(),
-        },
-        Err(past) => Duplicates {
-            total: None,
-            uncompared: Some(PairWork {
-                measured: past.work,
-                bound,
-            }),
-            items: Vec::new(),
-        },
-    }
 }
 
 fn quality_item(decision: &str, shortfall: Shortfall) -> LintItem {
@@ -517,25 +680,14 @@ impl Output for Measure {
     }
 }
 
-impl Output for PairWork {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        let measured = "The work the pass would do: the posting entries it reads and eight \
-                        for each pair it may test.";
-        fields.required("measured", measured, &Count, |w| &w.measured);
-        fields.required("bound", "The most one call does.", &Count, |w| &w.bound);
-        let more = "How the pairs come to be compared.";
-        fields.required("more", more, &Str, |_| UNCOMPARED_MORE);
-    }
-}
-
 impl Output for LintCounts {
     fn declare(fields: &mut Shown<'_, Self>) {
-        let duplicates = "Likely duplicate pairs, when they were compared.";
-        fields.optional("duplicates", duplicates, &Count, |c| c.duplicates.as_ref());
-        let uncompared = "When the pairs were not compared: the work their pass would do and \
-                          the most one call does.";
-        let work = Nested::<PairWork>::new();
-        fields.optional("uncompared", uncompared, &work, |c| c.uncompared.as_ref());
+        let duplicates = "Likely duplicate pairs of the page.";
+        fields.required("duplicates", duplicates, &Count, |c| &c.duplicates);
+        let pairs = "How far the pairs' probes read, when not to the last decision: `next`, \
+                     where `section: \"lint\"` with `from` reads on.";
+        let kind = Nested::<PatternCounts>::new();
+        fields.optional("pairs", pairs, &kind, |c| c.pairs.as_ref());
         let quality = "Rules of the bar the stored decisions break: every limit's, and the \
                        patterns' in the decisions `patterns` says they read.";
         fields.required("quality", quality, &Count, |c| &c.quality);
@@ -551,38 +703,68 @@ impl Output for LintCounts {
 mod tests {
     use super::*;
 
-    /// Two decisions of one text: a pair whose work is above zero. Past
-    /// the bound no pair is compared, and the counts say so with the work,
-    /// the bound and how to compare them, beside no count of pairs.
+    /// A `lint` call from `from`, its listing cut to `room` items a kind:
+    /// the pairs listed, as decisions, and the counts.
+    fn page_from(
+        state: &ProjectState,
+        from: Option<&str>,
+        room: usize,
+    ) -> (Vec<String>, LintCounts) {
+        let gathered = gather(state, None, Patterns::Judged { from });
+        let mut counts = gathered.counts;
+        let fit = |_, listed: Listed<LintItem>| {
+            let mut items = listed.items;
+            items.truncate(room);
+            Part {
+                total: listed.total,
+                omitted: listed.total - items.len(),
+                items,
+                more: None,
+            }
+        };
+        let part = fitted(gathered.items, fit, Some(&mut counts));
+        let pairs = part.items.iter().filter_map(|item| match item {
+            LintItem::Duplicate {
+                decision, other, ..
+            } => Some(format!("{decision} {other}")),
+            LintItem::Quality(_) | LintItem::FileAnchorsOnly { .. } => None,
+        });
+        (pairs.collect(), counts)
+    }
+
+    /// Twelve decisions of one text, 66 pairs, at most 11 on one probe's
+    /// page. A page whose room, 12 items, the listing cuts ends before the
+    /// probe of the first pair left out: the first lists the 10 of `d01` to
+    /// `d04`, `d05`'s 5 more passing the room, and names `d05` in
+    /// `counts.lint.pairs.next`. A walk from `next` to `next`
+    /// lists each pair once, and counts each on its page.
     #[test]
-    fn past_the_bound_the_counts_name_the_uncompared_pairs_instead_of_a_count() {
+    fn a_walk_of_lint_pages_lists_each_pair_once() {
         use crate::store::testing::{empty_state, sample_decision};
 
         let mut state = empty_state();
-        for name in ["copy", "original"] {
+        for index in 0..12 {
             let mut decision = sample_decision("project");
             decision.choice = "Retry with backoff".into();
-            state.decisions.insert(name.into(), decision);
+            state.decisions.insert(format!("d{index:02}"), decision);
         }
-        let compared = duplicates(&state, None, usize::MAX);
-        assert_eq!((compared.total, compared.items.len()), (Some(1), 1));
+        let (mut walked, mut counted, mut from) = (Vec::new(), 0, None);
+        loop {
+            let (pairs, counts) = page_from(&state, from.as_deref(), 12);
+            counted += counts.duplicates;
+            walked.extend(pairs);
+            let Some(next) = counts.pairs.and_then(|pairs| pairs.next) else {
+                break;
+            };
+            from = Some(next);
+        }
+        let first = page_from(&state, None, 12).1.pairs.unwrap();
 
-        let cut = duplicates(&state, None, 0);
-        let counts = LintCounts {
-            duplicates: cut.total,
-            uncompared: cut.uncompared,
-            quality: 0,
-            file_anchors_only: 0,
-            patterns: None,
-        };
-        let value = to_value(&counts);
-
-        assert!(cut.items.is_empty());
-        assert!(value.get("duplicates").is_none(), "{value}");
-        let uncompared = &value["uncompared"];
-        assert!(uncompared["measured"].as_u64().unwrap() > 0, "{value}");
-        assert_eq!(uncompared["bound"], 0);
-        assert_eq!(uncompared["more"], UNCOMPARED_MORE);
+        walked.sort();
+        walked.dedup();
+        assert_eq!((walked.len(), counted), (66, 66));
+        assert_eq!((first.judged, first.next.as_deref()), (5, Some("d05")));
+        assert!(matches!(first.cut, Some(Cut::Page)));
     }
 
     /// Each kind is gathered to as many of its smallest findings as one

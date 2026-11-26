@@ -27,7 +27,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::PathBuf;
 
 use crate::code::{CodeFacts, Resolution};
 use crate::store::{Anchor, Decision, Status};
@@ -43,9 +42,9 @@ pub(crate) const WEAK_FILES: usize = 10;
 /// A live worktree of the repository other than the calling tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Worktree {
-    /// Where it is read: its top, joined with the calling tree's place in
-    /// its own worktree.
-    pub(crate) path: PathBuf,
+    /// Where it is read, as a message shows it: its top, joined with the
+    /// calling tree's place in its own worktree.
+    pub(crate) path: String,
     /// `None` when its HEAD is detached.
     pub(crate) branch: Option<String>,
 }
@@ -237,7 +236,7 @@ impl Verdict for Checked {
                 }
             }
             Self::Pending(worktree) => {
-                let path = worktree.path.display();
+                let path = &worktree.path;
                 write!(f, "{cause} here; it resolves in the worktree at {path}")?;
                 match &worktree.branch {
                     Some(branch) => write!(f, " on branch `{branch}`"),

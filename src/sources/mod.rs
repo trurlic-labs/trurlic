@@ -148,13 +148,13 @@ fn elsewhere(
             Ok(changed) => changed,
             Err(error) => {
                 unread.push(UnreadWorktree {
-                    worktree: Some(forked.worktree.path),
+                    worktree: Some(forked.top),
                     cause: error.into(),
                 });
                 continue;
             }
         };
-        let facts = here.beside(&read_paths(store, &forked.worktree.path, changed, reads));
+        let facts = here.beside(&read_paths(store, &forked.top, changed, reads));
         asked.read(Elsewhere {
             worktree: forked.worktree,
             facts,

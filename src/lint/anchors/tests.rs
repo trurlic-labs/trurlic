@@ -188,7 +188,7 @@ fn with_git_not_asked_an_anchor_that_names_nothing_is_unresolved() {
     ];
     let holder = Elsewhere {
         worktree: Worktree {
-            path: PathBuf::from("/w/feature"),
+            path: "/w/feature".into(),
             branch: Some("feature".to_owned()),
         },
         facts: facts(&[("src/lib.rs", "pub fn close() {}\n")], &[]),
@@ -233,7 +233,7 @@ fn an_anchor_another_worktree_holds_is_pending_on_its_branch() {
     let here = facts(&[("src/lib.rs", LIB)], &[]);
     let tree = |path: &str, branch: Option<&str>, files: &[(&str, &str)]| Elsewhere {
         worktree: Worktree {
-            path: PathBuf::from(path),
+            path: path.into(),
             branch: branch.map(str::to_owned),
         },
         facts: facts(files, &[]),
@@ -427,7 +427,7 @@ fn findings_sort_by_kind_then_decision_then_anchor() {
 fn each_kind_has_its_severity() {
     let missing = || Missing(Resolution::FileMissing);
     let worktree = Worktree {
-        path: PathBuf::from("/w"),
+        path: "/w".into(),
         branch: None,
     };
     let kinds: [Kind<Checked>; 7] = [
@@ -1297,7 +1297,7 @@ fn a_planned_or_pending_anchor_is_never_repaired() {
     );
     let elsewhere = [Elsewhere {
         worktree: Worktree {
-            path: PathBuf::from("/w/branch"),
+            path: "/w/branch".into(),
             branch: Some("branch".into()),
         },
         facts: facts(&[("src/lib.rs", "pub fn branch() {}\n")], &[]),

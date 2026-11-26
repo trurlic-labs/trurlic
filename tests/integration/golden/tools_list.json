@@ -629,6 +629,32 @@
             },
             "type": "array"
           },
+          "duplicates_unsought": {
+            "additionalProperties": false,
+            "description": "When no likely duplicate was looked for: the work the lookup would do, past the most one call does, in units.",
+            "properties": {
+              "bound": {
+                "description": "The most one call does.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "measured": {
+                "description": "The work over every decision from the page's first on.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "unit": {
+                "description": "What both count: `bytes`, or `units`.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "measured",
+              "bound",
+              "unit"
+            ],
+            "type": "object"
+          },
           "left": {
             "description": "For a `repair_anchors` op with no `repairs`: each stale anchor the tree shows no repair for, or whose repair a `[quality]` pattern refuses, left as it was.",
             "items": {
@@ -657,7 +683,7 @@
             "type": "array"
           },
           "more_duplicates": {
-            "description": "Decisions with likely duplicates not listed in `duplicates`. `status` ranks the pairs under `lint`: the section lists the best pairs; the ones left out rank at or below the last listed, and come into view as the listed ones are settled (merged, or revised apart).",
+            "description": "Decisions with likely duplicates not listed in `duplicates`. `status` lists the pairs under `lint` a page at a time, best first within it.",
             "minimum": 0,
             "type": "integer"
           },
@@ -1102,7 +1128,7 @@
                 "description": "The `lint` findings of each kind, when the section is asked for.",
                 "properties": {
                   "duplicates": {
-                    "description": "Likely duplicate pairs, when they were compared.",
+                    "description": "Likely duplicate pairs of the page.",
                     "minimum": 0,
                     "type": "integer"
                   },
@@ -1111,12 +1137,12 @@
                     "minimum": 0,
                     "type": "integer"
                   },
-                  "patterns": {
+                  "pairs": {
                     "additionalProperties": false,
-                    "description": "How far the `[quality]` patterns were judged, when it has any.",
+                    "description": "How far the pairs' probes read, when not to the last decision: `next`, where `section: \"lint\"` with `from` reads on.",
                     "properties": {
                       "judged": {
-                        "description": "Decisions the patterns read on this page, by name.",
+                        "description": "Decisions this page read, by name: the patterns', or the pairs' probes.",
                         "minimum": 0,
                         "type": "integer"
                       },
@@ -1149,39 +1175,132 @@
                         "type": "object"
                       },
                       "unjudged": {
-                        "description": "Decisions they did not read on it.",
+                        "description": "Decisions it did not read.",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "why": {
-                        "description": "Why some went unjudged: `not_asked`, the call judged the limits alone; `work_limit`, the bytes the patterns read reached the bound; `gave_up`, a pattern's cache, or the caches together, filled over the page before `next`; `page`, the result's room ended the listing; `uncompiled`, a pattern does not compile.",
+                        "description": "Why some went unread: `not_asked`, the call judged the limits alone; `work_limit`, the work reached the bound; `gave_up`, a pattern's cache, or the caches together, filled over the page before `next`; `page`, the result's room, or another kind's page, ended the listing; `uncompiled`, a pattern does not compile; `unbuilt`, the decisions' texts alone pass the pairs' bound.",
                         "enum": [
                           "not_asked",
                           "work_limit",
                           "gave_up",
                           "page",
-                          "uncompiled"
+                          "uncompiled",
+                          "unbuilt"
                         ],
                         "type": "string"
                       },
                       "work": {
                         "additionalProperties": false,
-                        "description": "The bytes the patterns would read over every decision and the bound: each pattern the texts of the fields it reads, one more per text.",
+                        "description": "The work over every decision from the page's first on and the bound: for the patterns the bytes of each text each reads, one more per text; for the pairs the units their pass charges.",
                         "properties": {
                           "bound": {
-                            "description": "The most one call reads.",
+                            "description": "The most one call does.",
                             "minimum": 0,
                             "type": "integer"
                           },
                           "measured": {
-                            "description": "The bytes the patterns would read over every decision.",
+                            "description": "The work over every decision from the page's first on.",
                             "minimum": 0,
                             "type": "integer"
+                          },
+                          "unit": {
+                            "description": "What both count: `bytes`, or `units`.",
+                            "type": "string"
                           }
                         },
                         "required": [
                           "measured",
-                          "bound"
+                          "bound",
+                          "unit"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "judged",
+                      "unjudged"
+                    ],
+                    "type": "object"
+                  },
+                  "patterns": {
+                    "additionalProperties": false,
+                    "description": "How far the `[quality]` patterns were judged, when it has any.",
+                    "properties": {
+                      "judged": {
+                        "description": "Decisions this page read, by name: the patterns', or the pairs' probes.",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "more": {
+                        "description": "How the decisions left unjudged come to be judged.",
+                        "type": "string"
+                      },
+                      "next": {
+                        "description": "The first decision whose findings this page did not list wholly: `from` set to it reads on.",
+                        "type": "string"
+                      },
+                      "uncompiled": {
+                        "additionalProperties": false,
+                        "description": "The pattern that does not compile; `trurlic check` reports it.",
+                        "properties": {
+                          "index": {
+                            "description": "Its index in `[quality] patterns`.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "message": {
+                            "description": "Why it does not compile.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "index",
+                          "message"
+                        ],
+                        "type": "object"
+                      },
+                      "unjudged": {
+                        "description": "Decisions it did not read.",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "why": {
+                        "description": "Why some went unread: `not_asked`, the call judged the limits alone; `work_limit`, the work reached the bound; `gave_up`, a pattern's cache, or the caches together, filled over the page before `next`; `page`, the result's room, or another kind's page, ended the listing; `uncompiled`, a pattern does not compile; `unbuilt`, the decisions' texts alone pass the pairs' bound.",
+                        "enum": [
+                          "not_asked",
+                          "work_limit",
+                          "gave_up",
+                          "page",
+                          "uncompiled",
+                          "unbuilt"
+                        ],
+                        "type": "string"
+                      },
+                      "work": {
+                        "additionalProperties": false,
+                        "description": "The work over every decision from the page's first on and the bound: for the patterns the bytes of each text each reads, one more per text; for the pairs the units their pass charges.",
+                        "properties": {
+                          "bound": {
+                            "description": "The most one call does.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "measured": {
+                            "description": "The work over every decision from the page's first on.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "unit": {
+                            "description": "What both count: `bytes`, or `units`.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "measured",
+                          "bound",
+                          "unit"
                         ],
                         "type": "object"
                       }
@@ -1196,35 +1315,10 @@
                     "description": "Rules of the bar the stored decisions break: every limit's, and the patterns' in the decisions `patterns` says they read.",
                     "minimum": 0,
                     "type": "integer"
-                  },
-                  "uncompared": {
-                    "additionalProperties": false,
-                    "description": "When the pairs were not compared: the work their pass would do and the most one call does.",
-                    "properties": {
-                      "bound": {
-                        "description": "The most one call does.",
-                        "minimum": 0,
-                        "type": "integer"
-                      },
-                      "measured": {
-                        "description": "The work the pass would do: the posting entries it reads and eight for each pair it may test.",
-                        "minimum": 0,
-                        "type": "integer"
-                      },
-                      "more": {
-                        "description": "How the pairs come to be compared.",
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "measured",
-                      "bound",
-                      "more"
-                    ],
-                    "type": "object"
                   }
                 },
                 "required": [
+                  "duplicates",
                   "quality",
                   "file_anchors_only"
                 ],

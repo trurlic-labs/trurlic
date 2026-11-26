@@ -7,18 +7,15 @@ use crate::harness::{McpClient, Project, decision};
 
 const MAX_TOOL_RESULT_BYTES: usize = 24 * 1024;
 
-/// What the `lint` section says of the findings it leaves out, of each kind:
-/// pairs rank at or below the last listed, ties included; the others follow
-/// it by decision name; no surface lists them all.
-const LINT_MORE: &str = "each kind lists what fits and `counts.lint` counts it \
-                         whole: the duplicate pairs left out rank at or below the last listed; the \
-                         quality findings and the \
-                         decisions with only file anchors left out follow the last listed by decision \
-                         name, and `section: \"lint\"` with `from` lists the quality findings from a \
-                         decision on; they come into view as the listed ones are settled (pairs merged \
-                         or revised apart, decisions brought to the bar or anchored to a symbol); \
-                         `counts.lint.patterns` says which decisions the `[quality]` patterns did not \
-                         read and how to read them";
+/// What the `lint` section says of the findings it leaves out: a page of
+/// decisions by name, read on from `next`.
+const LINT_MORE: &str = "each kind lists what fits of the page and `counts.lint` \
+     counts it: the duplicate pairs and the quality findings of the decisions before the \
+     `next` that `counts.lint.pairs` or `counts.lint.patterns` names, which `section: \
+     \"lint\"` with `from` lists on from, a pair on the page of the later-named of its \
+     decisions the pass probed; the decisions with only file anchors left out follow the \
+     last listed by name; the listed ones settled (pairs merged or revised apart, decisions \
+     brought to the bar or anchored to a symbol), the rest come into view";
 
 /// Decisions with reasons long enough that `auth`'s context and file queries
 /// each exceed the budget several times over.
@@ -128,29 +125,33 @@ fn status_fits_the_budget_and_counts_what_it_leaves_out() {
 
     // The decisions' texts differ only in digits, which no term holds, so
     // every pair is a likely duplicate at a score of one; and each lacks an
-    // alternative and an anchor, two quality findings.
+    // alternative and an anchor, two quality findings. The pairs come a
+    // page at a time, each page ending where the budget cut its pairs.
     let lint_alone = fitted(&mut client, "status", json!({ "section": "lint" }));
     let (pairs, shortfalls) = (BROKEN * (BROKEN - 1) / 2, 2 * BROKEN);
     for status in [&whole, &lint_alone] {
         let lint = &status["lint"];
-        assert_eq!(
-            status["counts"]["lint"],
-            json!({ "duplicates": pairs, "quality": shortfalls, "file_anchors_only": 0 })
-        );
-        assert_eq!(lint["total"], pairs + shortfalls);
+        let counts = &status["counts"]["lint"];
+        let paged = counts["duplicates"].as_u64().unwrap() as usize;
+        assert!(paged > 0 && paged < pairs, "{counts}");
+        assert_eq!(counts["pairs"]["why"], "page", "{counts}");
+        assert_eq!(counts["quality"], shortfalls, "{counts}");
         let items = lint["items"].as_array().unwrap();
-        assert_eq!(lint["omitted"], pairs + shortfalls - items.len());
+        let listed = lint["total"].as_u64().unwrap() as usize;
+        assert_eq!(lint["omitted"], listed - items.len());
         assert_eq!(lint["more"], LINT_MORE);
         let of = |kind: &str| items.iter().filter(|item| item["kind"] == kind).count();
         // Each kind keeps its share of the budget: the pairs, far more,
-        // crowd out none of the quality findings' room.
+        // crowd out none of the quality findings' room. A `lint` call ends
+        // the quality findings where the pairs' page ends.
         let (listed_pairs, listed_shortfalls) = (of("duplicate"), of("quality"));
-        assert!(
-            listed_shortfalls * 3 > listed_pairs,
-            "{listed_pairs} {listed_shortfalls}"
-        );
-        // The pairs left out tie with the last listed one.
-        assert_eq!(items[listed_pairs - 1]["score"], "1.000000");
+        assert!(listed_shortfalls > 0 && listed_pairs > 0);
+        if status == &whole {
+            assert!(
+                listed_shortfalls * 3 > listed_pairs,
+                "{listed_pairs} {listed_shortfalls}"
+            );
+        }
         assert_eq!(
             items[0],
             json!({
@@ -169,6 +170,21 @@ fn status_fits_the_budget_and_counts_what_it_leaves_out() {
     }
     let shown = |status: &Value| status["lint"]["items"].as_array().unwrap().len();
     assert!(shown(&lint_alone) > shown(&whole));
+
+    // A walk from `next` to `next` counts every pair once.
+    let (mut counted, mut from) = (0, None::<String>);
+    loop {
+        let arguments = match &from {
+            Some(from) => json!({ "section": "lint", "from": from }),
+            None => json!({ "section": "lint" }),
+        };
+        let page = fitted(&mut client, "status", arguments);
+        counted += page["counts"]["lint"]["duplicates"].as_u64().unwrap() as usize;
+        let next = &page["counts"]["lint"]["pairs"]["next"];
+        let Some(next) = next.as_str() else { break };
+        from = Some(next.to_owned());
+    }
+    assert_eq!(counted, pairs);
 }
 
 /// Anchor findings past the budget: the section fits, keeps the

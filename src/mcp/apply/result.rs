@@ -13,6 +13,7 @@ use crate::store::{Applied, Done, Field, OpKind, PatternNote, StatusName, Warnin
 
 use super::duplicates::Duplicates;
 use super::repairs::{self, Left, Repaired};
+use crate::mcp::status::Work;
 
 /// What `apply` returns: what the store's write did, the repairs it wrote
 /// and the stale anchors it left, and the likely duplicates of the
@@ -30,6 +31,9 @@ pub(crate) struct Answer {
     pub(crate) duplicates: Vec<Duplicates>,
     /// The decisions with likely duplicates not listed.
     pub(crate) more_duplicates: usize,
+    /// The work the lookup of likely duplicates would do, when it passed
+    /// the bound and none was looked for.
+    pub(crate) unsought: Option<Work>,
 }
 
 impl Output for Answer {
@@ -96,20 +100,34 @@ fn declare_duplicates(fields: &mut Shown<'_, Answer>) {
     fields.optional("duplicates", about, &duplicates, |answer| {
         (!answer.duplicates.is_empty()).then_some(&answer.duplicates)
     });
-    let more = "Decisions with likely duplicates not listed in `duplicates`. `status` ranks the \
-                pairs under `lint`: the section lists the best pairs; the ones left out rank at \
-                or below the last listed, and come into view as the listed ones are settled \
-                (merged, or revised apart).";
+    let more = "Decisions with likely duplicates not listed in `duplicates`. `status` lists the \
+                pairs under `lint` a page at a time, best first within it.";
     fields.optional("more_duplicates", more, &Count, |answer| {
         (answer.more_duplicates > 0).then_some(&answer.more_duplicates)
     });
+    let unsought = "When no likely duplicate was looked for: the work the lookup would do, \
+                    past the most one call does, in units.";
+    fields.optional(
+        "duplicates_unsought",
+        unsought,
+        &Nested::<Work>::new(),
+        |answer| answer.unsought.as_ref(),
+    );
 }
 
 /// The answer of `applied` listing the leading items of `repaired`,
 /// `left` and `warned` that fit the result budget beside it, in that
 /// order, each list cut where its next item does not fit and the rest
 /// counted.
-pub(super) fn fit(mut applied: Applied, warned: Vec<Duplicates>, left: Vec<Left>) -> Answer {
+pub(super) fn fit(
+    mut applied: Applied,
+    warned: Result<Vec<Duplicates>, Work>,
+    left: Vec<Left>,
+) -> Answer {
+    let (warned, unsought) = match warned {
+        Ok(warned) => (warned, None),
+        Err(work) => (Vec::new(), Some(work)),
+    };
     let repaired: Vec<Repaired> = std::mem::take(&mut applied.repaired)
         .into_iter()
         .map(Repaired::from)
@@ -122,6 +140,7 @@ pub(super) fn fit(mut applied: Applied, warned: Vec<Duplicates>, left: Vec<Left>
         more_left: left.len(),
         duplicates: Vec::new(),
         more_duplicates: warned.len(),
+        unsought,
     };
     // Measured with every item counted, the most the counts can take, and
     // the frames of the three lists.
@@ -365,7 +384,11 @@ mod tests {
             repaired: vec![written; repairs],
             ..applied
         };
-        let answer = fit(applied, vec![warned; MAX_BATCH_OPS], vec![left; repairs]);
+        let answer = fit(
+            applied,
+            Ok(vec![warned; MAX_BATCH_OPS]),
+            vec![left; repairs],
+        );
 
         let bytes = to_value(&answer).to_string().len();
         assert!(bytes <= MAX_TOOL_RESULT_BYTES, "{bytes} bytes");

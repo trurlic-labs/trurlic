@@ -114,7 +114,7 @@ fn prepare(store: &Store, mut arguments: ApplyArgs) -> Outcome<ApplyArgs> {
     Ok(arguments)
 }
 
-fn apply(writer: &mut Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
+fn apply(mut writer: Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
     let ApplyArgs {
         ops,
         origin,
@@ -130,7 +130,9 @@ fn apply(writer: &mut Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
     };
     let applied = writer.apply(batch, &bar)?;
     let left = repairs::left(writer.state(), unrepaired, &applied.left);
-    let warned = duplicates::warned(&applied.ops, writer.state());
+    // The warnings read the graph the write left, the lock released.
+    let state = writer.into_state();
+    let warned = duplicates::warned(&applied.ops, &state);
     Ok(result::fit(applied, warned, left))
 }
 

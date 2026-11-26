@@ -111,13 +111,8 @@ fn lint(report: &Report) -> Result<()> {
     if let Some(patterns) = lint_counts.and_then(|counts| counts.patterns.as_ref()) {
         unjudged(patterns, &report.quality)?;
     }
-    if let Some(work) = lint_counts.and_then(|counts| counts.uncompared.as_ref()) {
-        out!(
-            "lint: likely duplicates not compared: their pass would do {} units of work, past \
-             the {} one call does; `--origin` compares only the pairs of its decisions",
-            work.measured,
-            work.bound
-        )?;
+    if let Some(pairs) = lint_counts.and_then(|counts| counts.pairs.as_ref()) {
+        paired(pairs)?;
     }
     let (Some(lint), Some(counts)) = (report.lint.as_ref(), report.counts.lint.as_ref()) else {
         return Ok(());
@@ -125,13 +120,11 @@ fn lint(report: &Report) -> Result<()> {
     if lint.total == 0 {
         return Ok(());
     }
-    let duplicates = counts.duplicates.map_or_else(
-        || "likely duplicates not compared".to_owned(),
-        |count| format!("{count} likely duplicate pair(s)"),
-    );
     out!(
-        "lint: {} ({duplicates}, {} quality finding(s), {} decision(s) with only file anchors)",
+        "lint: {} ({} likely duplicate pair(s), {} quality finding(s), {} decision(s) with only \
+         file anchors)",
         lint.total,
+        counts.duplicates,
         counts.quality,
         counts.file_anchors_only
     )?;
@@ -178,7 +171,7 @@ fn finding(item: &LintItem) -> String {
 /// Why the `[quality]` patterns left decisions unjudged, if they did.
 fn unjudged(patterns: &PatternCounts, quality: &QualityCounts) -> Result<()> {
     match &patterns.cut {
-        None => Ok(()),
+        None | Some(Cut::Unbuilt(_)) => Ok(()),
         Some(Cut::NotAsked) => out!(
             "lint: the limits alone; `trurlic status --section lint` judges the {} [quality] \
              pattern(s) too",
@@ -216,6 +209,36 @@ fn unjudged(patterns: &PatternCounts, quality: &QualityCounts) -> Result<()> {
             uncompiled.index,
             uncompiled.message
         ),
+    }
+}
+
+/// How far the likely duplicates' probes read, when not to the last.
+fn paired(pairs: &PatternCounts) -> Result<()> {
+    match &pairs.cut {
+        Some(Cut::Unbuilt(work)) => out!(
+            "lint: no likely duplicate compared: the decisions' texts alone take {} units of \
+             work, past the {} one call does",
+            work.measured,
+            work.bound
+        ),
+        Some(Cut::WorkLimit(work)) => {
+            out!(
+                "lint: the likely duplicates of {} of {} decision(s), by name, within {} units \
+                 of the {} their pass would do",
+                pairs.judged,
+                pairs.judged + pairs.unjudged,
+                work.bound,
+                work.measured
+            )?;
+            next_page(pairs)
+        }
+        Some(Cut::Page | Cut::NotAsked | Cut::GaveUp | Cut::Uncompiled(_)) | None => {
+            out!(
+                "lint: this page lists the likely duplicates of {} decision(s), by name",
+                pairs.judged
+            )?;
+            next_page(pairs)
+        }
     }
 }
 

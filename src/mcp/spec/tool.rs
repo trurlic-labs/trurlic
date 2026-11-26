@@ -23,7 +23,9 @@ pub(crate) type Outcome<O> = Result<O, ToolError>;
 pub(crate) enum Access<A, O> {
     /// The graph loaded under the shared lock, and the store it came from.
     Read(fn(&Store, &ProjectState, A) -> Outcome<O>),
-    /// A writer, `write`: the graph loaded under the exclusive lock. Before
+    /// A writer, `write`: the graph loaded under the exclusive lock, which
+    /// the handler may let go of once it has written, for a read of the
+    /// graph its write left that needs no lock. Before
     /// it, `read` adds to the arguments what the write needs of the code
     /// tree or the project's git, read holding no lock, so a slow git holds
     /// no other writer and the index's cache can fill. The graph can change
@@ -31,7 +33,7 @@ pub(crate) enum Access<A, O> {
     /// `write` loads.
     Write {
         read: fn(&Store, A) -> Outcome<A>,
-        write: fn(&mut Writer<'_>, A) -> Outcome<O>,
+        write: fn(Writer<'_>, A) -> Outcome<O>,
     },
     /// The store and the client: a handler that asks the client and waits
     /// for the answer loads or writes the store itself, so it holds no
@@ -73,7 +75,7 @@ impl<A: Args, O: Output> ToolSpec<A, O> {
             Access::Read(run) => run(store, &store.load_state()?, arguments),
             Access::Write { read, write } => {
                 let arguments = read(store, arguments)?;
-                write(&mut store.begin_write()?, arguments)
+                write(store.begin_write()?, arguments)
             }
             Access::Interactive(_) => Err(ToolError::refused(format!(
                 "`{}` asks the MCP client, which a command has none of",
@@ -211,7 +213,7 @@ mod tests {
         })
     }
 
-    fn format(writer: &mut Writer<'_>, named: Named) -> Outcome<Probed> {
+    fn format(mut writer: Writer<'_>, named: Named) -> Outcome<Probed> {
         let formatted = writer.format()?;
         Ok(Probed {
             name: named.name,

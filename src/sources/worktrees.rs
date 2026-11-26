@@ -47,6 +47,8 @@ pub(super) struct Others {
 #[derive(Debug)]
 pub(super) struct Forked {
     pub(super) worktree: Worktree,
+    /// Where it is read, which `worktree` names as text.
+    pub(super) top: PathBuf,
     base: Option<String>,
 }
 
@@ -55,7 +57,7 @@ impl Forked {
     /// tree differs in from the fork: all of them when there is none.
     pub(super) fn changed(&self, paths: &[&str]) -> Result<BTreeSet<String>> {
         match &self.base {
-            Some(base) => git::changed_since(&self.worktree.path, base, paths),
+            Some(base) => git::changed_since(&self.top, base, paths),
             None => Ok(paths.iter().map(|&path| path.to_owned()).collect()),
         }
     }
@@ -137,10 +139,11 @@ fn listed(code_root: &Path) -> std::result::Result<Others, UnreadCause> {
         match fork(code_root, tree, own) {
             Ok(base) => others.trees.push(Forked {
                 worktree: Worktree {
-                    path,
+                    path: path.display().to_string(),
                     // clone: the finding outlives the listing.
                     branch: tree.branch.clone(),
                 },
+                top: path,
                 base,
             }),
             Err(error) => others.unread.push(UnreadWorktree {

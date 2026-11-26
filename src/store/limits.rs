@@ -102,19 +102,18 @@ pub(crate) const MAX_WRITE_PATTERN_BYTES: usize = 100_000_000;
 /// names the first it left in `next`.
 pub(crate) const MAX_REPORT_PATTERN_BYTES: usize = 2_500_000_000;
 
-/// The work the likely duplicates pass may do in one `status` call: the
-/// posting entries it reads, each term's decisions paired, and eight for
-/// each pair it may test (`lint::duplicates`), all counted from the
-/// postings before it runs. A graph whose every pair shares five terms,
-/// the costliest shape per unit measured, takes about 2 ns a unit on one
-/// core of the development machine, so a call at the bound costs about
-/// 32 s of CPU, which the thread pool shares. The seeded corpus does about
-/// 56 million units at 2,000 decisions and 5.6 billion at 20,000; the
-/// five-term graph does 2.6 billion at 20,000 and passes the bound at
-/// 50,000. Past it the `lint` section
-/// compares no pair and `counts.lint.uncompared` says so; under an
-/// `origin` only the decisions recorded there are probed.
-pub(crate) const MAX_DUPLICATE_WORK: usize = 16_000_000_000;
+/// The work the likely duplicates may cost one call, in units of a
+/// posting entry read: the vectors' build by the bytes of the texts, and
+/// each probe by the entries it reads and the pairs it may test, weighted
+/// (`lint::duplicates`), each counted before it runs. A `status` lint
+/// section probes the decisions by name while their work fits and names
+/// the first it left in `next`; `apply` looks for no duplicate past it.
+/// The costliest shape per unit measured, decisions that share all their
+/// terms, takes about 1.7 ns a unit on one core of the development
+/// machine, so a call at the bound costs about 10 s of CPU. The seeded
+/// corpus does about 0.1 billion units at 2,000 decisions and 7.6 billion,
+/// two pages, at 20,000.
+pub(crate) const MAX_DUPLICATE_WORK: usize = 6_000_000_000;
 
 /// Maximum byte length of a `[quality]` pattern's message, one line.
 pub(crate) const MAX_PATTERN_MESSAGE_BYTES: usize = 200;

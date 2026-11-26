@@ -24,7 +24,7 @@ mod report;
 
 pub(crate) use anchors::AnchorCounts;
 use anchors::{AnchorItem, anchor_section};
-pub(crate) use lint::{Cut, LintItem, PAIRS_MORE, PatternCounts};
+pub(crate) use lint::{Cut, LintItem, PAIRS_MORE, PatternCounts, Work};
 use lint::{LINT_MORE, LintItems, LintKind, Patterns};
 use report::{ComponentItem, Counts, HistoryItem, HistoryKind, IssueItem};
 pub(crate) use report::{Part, QualityCounts, Report};

@@ -113,6 +113,13 @@ impl Writer<'_> {
         &self.state
     }
 
+    /// The graph as the last commit left it on disk, the lock released: a
+    /// read of it that holds no other reader or writer up.
+    #[must_use]
+    pub fn into_state(self) -> ProjectState {
+        self.state
+    }
+
     /// Rewrite each file whose bytes are not the canonical form of what it
     /// holds, in one commit, and return those files. The graph does not
     /// change: every write reads back as the value it was made from, so it

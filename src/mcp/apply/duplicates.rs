@@ -1,11 +1,14 @@
 //! The likely duplicates `apply` warns of: for each decision whose choice
 //! or reason the batch wrote, its nearest decisions in the graph the batch
 //! left, at the threshold of `lint::duplicates` or above. A warning, never
-//! a refusal: the batch is written before they are looked for.
+//! a refusal: the batch is written, and its lock released, before they
+//! are looked for, within [`MAX_DUPLICATE_WORK`].
 
 use crate::lint::duplicates::Similarity;
 use crate::mcp::spec::output::{Items, Nested, Str};
 use crate::mcp::spec::{Output, Shown};
+use crate::mcp::status::Work;
+use crate::store::limits::MAX_DUPLICATE_WORK;
 use crate::store::{Done, Field, OpKind, ProjectState};
 
 /// The likely duplicates listed per decision, best first.
@@ -51,15 +54,26 @@ impl Output for Nearest {
 }
 
 /// The likely duplicates of each decision whose text `ops` wrote, in
-/// `state`, the graph they left, in the order of the ops.
-pub(super) fn warned(ops: &[Done], state: &ProjectState) -> Vec<Duplicates> {
+/// `state`, the graph they left, in the order of the ops; or, when their
+/// lookup's work passes [`MAX_DUPLICATE_WORK`], that work, and none looked
+/// for.
+pub(super) fn warned(ops: &[Done], state: &ProjectState) -> Result<Vec<Duplicates>, Work> {
     let written = text_written(ops);
     if written.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let names: Vec<&str> = written.iter().map(String::as_str).collect();
-    let nearest = Similarity::of(state).nearest(&names, NEAREST);
-    names
+    let past = |work| Work {
+        measured: work,
+        bound: MAX_DUPLICATE_WORK,
+        unit: "units",
+    };
+    let similarity =
+        Similarity::of(state, MAX_DUPLICATE_WORK).map_err(|past_bound| past(past_bound.work))?;
+    let nearest = similarity
+        .nearest(&names, NEAREST)
+        .map_err(|past_bound| past(past_bound.work))?;
+    Ok(names
         .into_iter()
         .zip(nearest)
         .filter(|(_, nearest)| !nearest.is_empty())
@@ -73,7 +87,7 @@ pub(super) fn warned(ops: &[Done], state: &ProjectState) -> Vec<Duplicates> {
                 })
                 .collect(),
         })
-        .collect()
+        .collect())
 }
 
 /// The decisions whose choice or reason `ops` wrote, by their names after

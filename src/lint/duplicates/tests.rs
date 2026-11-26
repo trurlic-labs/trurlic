@@ -61,20 +61,30 @@ fn graph(decisions: &[(&str, &str, &str)]) -> ProjectState {
     state
 }
 
-/// The pass over `among`, keeping `limit` pairs, with no bound on its work.
-fn pairs_of<'s>(similarity: &Similarity<'s>, among: Among<'_>, limit: usize) -> Ranked<'s> {
-    similarity.pairs(among, limit, usize::MAX).unwrap()
+/// The vectors of `state`, built with no bound on the work.
+fn built(state: &ProjectState) -> Similarity<'_> {
+    Similarity::of(state, usize::MAX).unwrap()
 }
 
-/// Every likely duplicate pair: the selection bounded by nothing.
+/// The first page `among`, keeping `limit` pairs, with no bound on its work.
+fn pairs_of<'s>(similarity: &Similarity<'s>, among: Among<'_>, limit: usize) -> Page<'s> {
+    similarity.page(among, None, limit)
+}
+
+/// Every likely duplicate pair: one page bounded by nothing.
 fn every<'s>(similarity: &Similarity<'s>) -> Vec<Pair<'s>> {
-    let ranked = pairs_of(similarity, Among::Every, usize::MAX);
-    assert_eq!(ranked.total, ranked.best.len());
-    ranked.best
+    let page = pairs_of(similarity, Among::Every, usize::MAX);
+    assert_eq!((page.total, page.next), (page.pairs.len(), None));
+    page.pairs
+}
+
+/// A pair as its two decisions and its score, whatever its page.
+fn named<'s>(pairs: &[Pair<'s>]) -> Vec<(&'s str, &'s str, Score)> {
+    pairs.iter().map(|p| (p.first, p.second, p.score)).collect()
 }
 
 fn listed(state: &ProjectState) -> Vec<(&str, &str, String)> {
-    every(&Similarity::of(state))
+    every(&built(state))
         .into_iter()
         .map(|pair| (pair.first, pair.second, pair.score.to_string()))
         .collect()
@@ -96,7 +106,7 @@ fn the_pairs_at_the_threshold_are_the_reference_cosines_best_first() {
             ("lock-reads", "lock-writes", "0.519110".to_owned()),
         ]
     );
-    let scores: Vec<u128> = every(&Similarity::of(&state))
+    let scores: Vec<u128> = every(&built(&state))
         .into_iter()
         .map(|pair| nanos(pair.score))
         .collect();
@@ -123,7 +133,7 @@ fn a_pair_at_exactly_the_threshold_is_listed_and_one_a_unit_below_is_not() {
         ("a3", "delta", ""),
         ("a4", "gamma", ""),
     ]);
-    let similarity = Similarity::of(&state);
+    let similarity = built(&state);
     // `a1`'s one term is `a0`'s at the same weight: their dot product is
     // `a1`'s square.
     let (all, one) = (&similarity.vectors[0], &similarity.vectors[1]);
@@ -138,10 +148,12 @@ fn a_pair_at_exactly_the_threshold_is_listed_and_one_a_unit_below_is_not() {
     assert_eq!(score(one.square - 1), None);
 }
 
-/// The pass holds no more pairs than it is asked for, however many there
-/// are, and counts every one: those it keeps lead the whole ranking.
+/// A page holds the pairs of its probes in name order while they fit its
+/// limit, best first, and names the first probe left out; a first probe
+/// whose pairs alone pass the limit keeps its best and the page moves on.
+/// A walk from `next` to `next` lists every pair once and counts each.
 #[test]
-fn the_pass_keeps_the_best_it_is_asked_for_and_counts_every_pair() {
+fn a_walk_by_next_lists_every_pair_once_a_page_within_its_limit() {
     let names: Vec<String> = (0..60).map(|index| format!("d{index:02}")).collect();
     let decisions: Vec<(&str, &str, &str)> = names
         .iter()
@@ -156,16 +168,36 @@ fn the_pass_keeps_the_best_it_is_asked_for_and_counts_every_pair() {
         })
         .collect();
     let state = graph(&decisions);
-    let similarity = Similarity::of(&state);
+    let similarity = built(&state);
     let whole = every(&similarity);
 
-    let ranked = pairs_of(&similarity, Among::Every, 7);
+    // d01 has 1 pair, d02 2, d03 3: 6 within 7, and d04 would pass it.
+    let first = pairs_of(&similarity, Among::Every, 7);
+    let mut expected: Vec<Pair<'_>> = whole
+        .iter()
+        .filter(|pair| pair.probe <= "d03")
+        .cloned()
+        .collect();
+    expected.sort_by_key(|pair| (Reverse(pair.score), pair.first, pair.second));
+    assert_eq!((first.total, first.pairs), (6, expected));
+    assert_eq!(first.next, Some(("d04", PageEnd::Pairs)));
+    let crowded = similarity.page(Among::Every, Some("d59"), 7);
+    assert_eq!((crowded.total, crowded.pairs.len()), (59, 7));
+    assert_eq!(crowded.next, None);
 
+    let (mut walked, mut counted, mut from) = (Vec::new(), 0, None);
+    loop {
+        let page = similarity.page(Among::Every, from, 100);
+        counted += page.total;
+        walked.extend(named(&page.pairs));
+        let Some((next, _)) = page.next else { break };
+        from = Some(next);
+    }
+    walked.sort();
+    let mut whole = named(&whole);
+    whole.sort();
     assert_eq!(whole.len(), 60 * 59 / 2);
-    assert_eq!(ranked.total, whole.len());
-    assert_eq!(ranked.best, whole[..7]);
-    let none = pairs_of(&similarity, Among::Every, 0);
-    assert_eq!((none.total, none.best.len()), (whole.len(), 0));
+    assert_eq!((counted, walked), (whole.len(), whole));
 }
 
 #[test]
@@ -181,12 +213,12 @@ fn identical_texts_score_one_and_a_text_without_terms_pairs_with_none() {
         listed(&state),
         [("copy", "original", "1.000000".to_owned())]
     );
-    assert_eq!(nearest_of(&Similarity::of(&state), "empty", 3), []);
+    assert_eq!(nearest_of(&built(&state), "empty", 3), []);
 }
 
 /// The likely duplicates of the one decision `name`.
 fn nearest_of<'s>(similarity: &Similarity<'s>, name: &str, count: usize) -> Vec<Neighbour<'s>> {
-    let mut nearest = similarity.nearest(&[name], count);
+    let mut nearest = similarity.nearest(&[name], count).unwrap();
     assert_eq!(nearest.len(), 1);
     nearest.remove(0)
 }
@@ -194,7 +226,7 @@ fn nearest_of<'s>(similarity: &Similarity<'s>, name: &str, count: usize) -> Vec<
 #[test]
 fn nearest_lists_the_likely_duplicates_best_first_up_to_its_count() {
     let state = graph(&FIXTURE);
-    let similarity = Similarity::of(&state);
+    let similarity = built(&state);
     let nearest = |name, count| -> Vec<(&str, String)> {
         nearest_of(&similarity, name, count)
             .into_iter()
@@ -229,13 +261,13 @@ fn nearest_lists_the_likely_duplicates_best_first_up_to_its_count() {
         ),
         ("zero", "Sign every token", "Short tokens."),
     ]);
-    let similarity = Similarity::of(&copies);
+    let similarity = built(&copies);
     let names: Vec<&str> = nearest_of(&similarity, "base", 3)
         .into_iter()
         .map(|neighbour| neighbour.name)
         .collect();
     assert_eq!(names, ["one", "two", "three"]);
-    let both = similarity.nearest(&["absent", "zero"], 1);
+    let both = similarity.nearest(&["absent", "zero"], 1).unwrap();
     assert_eq!(both.len(), 2);
     assert_eq!(both[0], []);
 }
@@ -276,7 +308,7 @@ fn the_index_finds_every_pair_the_exact_test_over_all_pairs_finds() {
     let mut rng = SplitMix64::new(11);
     for _ in 0..20 {
         let state = graph_of(&drawn(&mut rng));
-        let similarity = Similarity::of(&state);
+        let similarity = built(&state);
 
         let found = every(&similarity);
         let exact = every_pair(&similarity);
@@ -310,11 +342,11 @@ fn the_index_finds_every_pair_the_exact_test_over_all_pairs_finds() {
 #[test]
 fn the_pairs_touching_some_decisions_are_those_that_hold_one_of_them() {
     let state = graph(&FIXTURE);
-    let similarity = Similarity::of(&state);
+    let similarity = built(&state);
     let touching = |names: &[&str]| {
-        let ranked = pairs_of(&similarity, Among::Touching(names), usize::MAX);
-        let pairs: Vec<(&str, &str)> = ranked.best.iter().map(|p| (p.first, p.second)).collect();
-        (ranked.total, pairs)
+        let page = pairs_of(&similarity, Among::Touching(names), usize::MAX);
+        let pairs: Vec<(&str, &str)> = page.pairs.iter().map(|p| (p.first, p.second)).collect();
+        (page.total, pairs)
     };
     let cache = (1, vec![("cache-node-reads", "cache-reads")]);
     assert_eq!(touching(&["cache-node-reads"]), cache);
@@ -325,55 +357,82 @@ fn the_pairs_touching_some_decisions_are_those_that_hold_one_of_them() {
     let mut rng = SplitMix64::new(5);
     for _ in 0..20 {
         let state = graph_of(&drawn(&mut rng));
-        let similarity = Similarity::of(&state);
-        let named: Vec<&str> = similarity
+        let similarity = built(&state);
+        let admitted: Vec<&str> = similarity
             .names
             .iter()
             .copied()
             .filter(|_| rng.below(3) == 0)
             .collect();
-        let holds = |pair: &Pair<'_>| named.contains(&pair.first) || named.contains(&pair.second);
+        let holds =
+            |pair: &Pair<'_>| admitted.contains(&pair.first) || admitted.contains(&pair.second);
         let expected: Vec<Pair<'_>> = every_pair(&similarity).into_iter().filter(holds).collect();
 
-        let ranked = pairs_of(&similarity, Among::Touching(&named), usize::MAX);
+        let page = pairs_of(&similarity, Among::Touching(&admitted), usize::MAX);
 
         assert!(!expected.is_empty());
-        assert_eq!((ranked.total, ranked.best), (expected.len(), expected));
+        assert_eq!(
+            (page.total, named(&page.pairs)),
+            (expected.len(), named(&expected))
+        );
     }
 }
 
-/// The work is the posting entries the pass reads and `PAIR_WORK` for each
-/// pair it may test, counted from the terms: `alpha`, held by three
-/// decisions, and `beta`, by two. Over every pair, 3 entries for `alpha`
-/// and 1 for `beta`, and the 3 pairs; touching `c`, its `alpha` against two
-/// others, 2 entries and 2 pairs; touching `a` and `b`, three entries each,
-/// and each against the two others. A bound below the work runs no pass;
-/// one at it runs the pass.
+/// The work of the build is 16 units per byte of `choice` and `reason`,
+/// a decision counted as 64 bytes more: 217 bytes here, 3472 units. A
+/// probe's is the posting entries it reads and 16 per pair it may test:
+/// over every pair, `b` reads 2 entries and reaches 1 decision, 18 units,
+/// `c` reads 2 and reaches 2, 34; `c` alone, against every other, reads 3
+/// entries and reaches 2, 35; `a` and `b` alone would do 37 each, more
+/// than every pair costs, so that pass runs.
 #[test]
-fn the_pass_runs_only_when_its_work_is_within_the_bound() {
+fn each_step_runs_only_while_its_work_is_within_the_bound() {
     let state = graph(&[
         ("a", "alpha beta", ""),
         ("b", "alpha beta", ""),
         ("c", "alpha", ""),
     ]);
-    let similarity = Similarity::of(&state);
-    let cases: [(Among<'_>, usize); 3] = [
-        (Among::Every, 4 + 3 * PAIR_WORK),
-        (Among::Touching(&["c"]), 2 + 2 * PAIR_WORK),
-        (Among::Touching(&["a", "b"]), 6 + 4 * PAIR_WORK),
-    ];
+    assert_eq!(
+        Similarity::of(&state, 3471).err(),
+        Some(PastBound { work: 3472 })
+    );
+    let similarity = built(&state);
+    let work = |among| pairs_of(&similarity, among, usize::MAX).work;
+    assert_eq!(work(Among::Every), 3524);
+    assert_eq!(work(Among::Touching(&["c"])), 3507);
+    assert_eq!(work(Among::Touching(&["a", "b"])), 3524);
 
-    for (among, work) in cases {
-        assert_eq!(
-            similarity.pairs(among, usize::MAX, work - 1),
-            Err(PastBound { work }),
-            "{among:?}"
-        );
-        assert!(
-            similarity.pairs(among, usize::MAX, work).is_ok(),
-            "{among:?}"
-        );
-    }
+    let bounded = Similarity::of(&state, 3490).unwrap();
+    let page = bounded.page(Among::Every, None, usize::MAX);
+    assert_eq!(
+        (page.run, page.next),
+        (vec!["a", "b"], Some(("c", PageEnd::Work)))
+    );
+    let next = bounded.page(Among::Every, Some("c"), usize::MAX);
+    assert_eq!((next.run, next.next), (vec!["c"], None));
+    assert_eq!(
+        Similarity::of(&state, 3506)
+            .unwrap()
+            .nearest(&["c"], 3)
+            .err(),
+        Some(PastBound { work: 3507 })
+    );
+}
+
+/// A probe may test no more pairs than the entries it reads: `x` reads 1
+/// entry of the 1 decision before it, `y` and `z` none of the 2 and 3.
+#[test]
+fn a_probe_is_charged_no_pair_it_reads_no_entry_for() {
+    let state = graph(&[
+        ("w", "alpha", ""),
+        ("x", "alpha", ""),
+        ("y", "beta", ""),
+        ("z", "gamma", ""),
+    ]);
+    let page = pairs_of(&built(&state), Among::Every, usize::MAX);
+
+    // Build: 19 bytes of text and 64 per decision, at 16 units: 4400.
+    assert_eq!(page.work, 4417);
 }
 
 /// Every pair the exact test passes, tried one by one with its dot
@@ -398,6 +457,7 @@ fn every_pair<'s>(similarity: &Similarity<'s>) -> Vec<Pair<'s>> {
                 pairs.push(Pair {
                     first,
                     second,
+                    probe: second,
                     score,
                 });
             }
@@ -468,13 +528,30 @@ fn the_pairs_are_the_same_on_any_number_of_threads() {
             .build()
             .unwrap();
         pool.install(|| {
-            let ranked = pairs_of(&Similarity::of(&state), Among::Every, 40);
-            (ranked.total, ranked.best)
+            // A walk at 100 pairs a page, its work bounded too, so the
+            // pages end at the bound and at the limit.
+            let build = Similarity::of(&state, 0).err().unwrap().work;
+            let similarity = Similarity::of(&state, build + 5_000).unwrap();
+            let (mut pages, mut from) = (Vec::new(), None);
+            loop {
+                let page = similarity.page(Among::Every, from, 100);
+                let next = page.next;
+                pages.push(page);
+                let Some((next, _)) = next else { break };
+                from = Some(next);
+            }
+            pages
         })
     };
 
     let one = on(1);
-    assert!(one.0 > 1000, "{}", one.0);
+    let counted: usize = one.iter().map(|page| page.total).sum();
+    let ends = |why| {
+        one.iter()
+            .filter(move |page| page.next.is_some_and(|(_, end)| end == why))
+    };
+    assert!(counted > 1000, "{counted}");
+    assert!(ends(PageEnd::Work).count() > 0 && ends(PageEnd::Pairs).count() > 0);
     assert_eq!(one, on(8));
 }
 
@@ -491,7 +568,7 @@ fn the_seeded_corpus_pairs_only_its_restatements() {
     let store = Corpus::new(600).write(tmp.path()).unwrap();
     let state = store.load_state().unwrap();
 
-    let similarity = Similarity::of(&state);
+    let similarity = built(&state);
     let pairs = every(&similarity);
     assert!((4..=24).contains(&pairs.len()), "{}", pairs.len());
     for pair in pairs {

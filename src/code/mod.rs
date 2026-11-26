@@ -100,21 +100,19 @@ mod tests {
     const SEEDED: &[(&str, &str)] = &[
         (
             "pure",
-            "use std::collections::BTreeMap;\nuse std::io::ErrorKind;\nuse crate::store::Anchor;\nuse super::index::FileKind;\nuse tree_sitter::Node;\nfn f() -> core::fmt::Result { Ok(()) }\nconst Q: &str = include_str!(\"queries/q.scm\");\nconst R: &str = include_str!(\"./queries/../q.scm\");\nuse std::path::PathBuf;\nuse rayon::prelude::*;\nfn g(path: &PathBuf) -> bool { path.has_root() }\nmod checks {\n    #![cfg(test)]\n    fn probe() { std::fs::read(\"x\"); }\n}\n",
+            "use std::collections::BTreeMap;\nuse std::io::ErrorKind;\nuse crate::store::Anchor;\nuse super::index::FileKind;\nuse tree_sitter::Node;\nfn f() -> core::fmt::Result { Ok(()) }\nconst Q: &str = include_str!(\"queries/q.scm\");\nconst R: &str = include_str!(\"./queries/../q.scm\");\nuse std::sync::{Arc, LazyLock};\nuse rayon::prelude::*;\nmod checks {\n    #![cfg(test)]\n    fn probe() { std::fs::read(\"x\"); }\n}\n",
         ),
+        ("path_type", "fn f(path: &std::path::PathBuf) {}\n"),
         (
-            "path_method",
-            "fn f(path: &std::path::PathBuf) -> bool { path.exists() }\n",
+            "module_alias",
+            "use std::collections as c;\nfn f() { let _ = c::BTreeMap::<u8, u8>::new(); }\n",
         ),
+        ("item_alias", "use std::collections::BTreeMap as Map;\n"),
+        ("sync_clock", "fn f(wait: &std::sync::Condvar) {}\n"),
         (
-            "path_function",
-            "use std::path::PathBuf;\nfn f(path: &PathBuf) -> bool { PathBuf::is_file(path) }\n",
+            "macro_definition",
+            "macro_rules! call { ($v:expr, $m:ident) => { $v.$m() }; }\n",
         ),
-        (
-            "random_state",
-            "fn f() { let _ = std::collections::hash_map::RandomState::new(); }\n",
-        ),
-        ("hash_map", "use std::collections::{BTreeMap, HashMap};\n"),
         (
             "crate_item",
             "fn f() -> usize { rayon::current_num_threads() }\n",
@@ -228,7 +226,26 @@ mod tests {
         };
         write("Cargo.toml", "[package]\n[dependencies]\nrayon = \"1\"\n");
         write("src/lib.rs", "mod index;\n");
-        let modules: String = SEEDED
+        // Each refused name, reached through an allowed module's own name.
+        let refused: Vec<(String, String)> = super::purity::REFUSED_NAMES
+            .iter()
+            .map(|name| {
+                let text = format!(
+                    "use std::collections;\nfn f() {{ let _ = collections::{name}::default(); }}\n"
+                );
+                (format!("refused_{}", name.to_lowercase()), text)
+            })
+            .collect();
+        let files: Vec<(&str, &str)> = SEEDED
+            .iter()
+            .copied()
+            .chain(
+                refused
+                    .iter()
+                    .map(|(name, text)| (name.as_str(), text.as_str())),
+            )
+            .collect();
+        let modules: String = files
             .iter()
             .map(|(name, _)| format!("mod {name};\n"))
             .collect();
@@ -240,28 +257,27 @@ mod tests {
         );
         write("src/index/tests.rs", "use std::fs;\n");
         write("src/index/test_file_shipped/hidden.rs", "use std::fs;\n");
-        for (name, text) in SEEDED {
+        for (name, text) in &files {
             write(&format!("src/index/{name}.rs"), text);
         }
-        // The index's list, with a path type and the thread pool's prelude.
+        // The index's list, with the thread pool's prelude.
         let listed = AllowList {
-            std_items: &[("io", "ErrorKind"), ("path", "PathBuf")],
             crate_items: &[("rayon", "prelude")],
             ..INDEX
         };
         let found = faults(root, "src/index", &listed);
-        let files: std::collections::BTreeSet<&str> = found
+        let faulted: std::collections::BTreeSet<&str> = found
             .iter()
             .map(|fault| fault.split(':').next().unwrap())
             .collect();
-        let expected: std::collections::BTreeSet<String> = SEEDED
+        let expected: std::collections::BTreeSet<String> = files
             .iter()
             .filter(|(name, _)| *name != "pure")
             .map(|(name, _)| format!("src/index/{name}.rs"))
             .collect();
 
         assert_eq!(
-            files,
+            faulted,
             expected.iter().map(String::as_str).collect(),
             "{found:#?}"
         );
