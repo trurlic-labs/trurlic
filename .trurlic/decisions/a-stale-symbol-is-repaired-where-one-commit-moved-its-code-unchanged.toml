@@ -16,7 +16,7 @@ anchors = [
     { file = "src/lint/anchors/repair.rs", symbol = "lost" },
     { file = "src/lint/anchors/repair.rs", symbol = "missing" },
     { file = "src/lint/anchors/repair.rs", symbol = "moved_to" },
-    { file = "src/sources/repair/mod.rs", symbol = "MAX_LOSS_CANDIDATES" },
+    { file = "src/sources/repair/moves.rs", symbol = "MAX_LOSS_CANDIDATES" },
     { file = "src/sources/repair/renames.rs", symbol = "History::lineage" },
     { file = "tests/integration/repair.rs", symbol = "a_function_moved_across_crates_with_its_edited_file_is_repaired" },
     { file = "tests/integration/repair.rs", symbol = "a_loss_that_changed_more_candidates_than_the_bound_is_never_repaired" },
