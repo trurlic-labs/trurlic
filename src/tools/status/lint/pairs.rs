@@ -4,12 +4,18 @@
 //! compared, why no more, and how the rest come to be compared.
 
 use crate::lint::duplicates::{Among, Similarity};
-use crate::store::ProjectState;
 use crate::store::limits::MAX_DUPLICATE_WORK;
+use crate::store::{Decision, ProjectState};
 use crate::tools::spec::output::{Count, Nested, Str, Tag};
 use crate::tools::spec::{Output, Shown};
 
-use super::{LintItem, LintKind, Patterns, Work, is_under, lint_limit};
+use super::finding::{LintItem, LintKind, lint_limit};
+use super::patterns::{Patterns, Work};
+
+/// What every surface says of the duplicate pairs a listing leaves out.
+pub(crate) const PAIRS_MORE: &str = "the section lists the best pairs; the ones left out rank \
+     at or below the last listed, and come into view as the listed ones are settled (merged, \
+     or revised apart)";
 
 /// The decisions the pairs' pass compared and those it did not.
 pub(crate) struct PairCounts {
@@ -86,6 +92,11 @@ pub(super) fn compared(
         // A page read on from a decision lists its quality findings alone.
         Patterns::Judged { from: Some(_) } | Patterns::NotAsked => unasked(state, origin),
     }
+}
+
+/// Whether `decision` is recorded under `origin`: every one when `None`.
+pub(super) fn is_under(origin: Option<&str>, decision: &Decision) -> bool {
+    origin.is_none_or(|origin| decision.origin.as_deref() == Some(origin))
 }
 
 /// The decisions of `state` recorded under `origin`, every one when `None`.

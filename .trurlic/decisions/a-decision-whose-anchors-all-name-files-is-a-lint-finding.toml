@@ -10,7 +10,7 @@ origin = "quality findings"
 created = "2026-11-24T11:30:37.585834133Z"
 anchors = [
     { file = "src/lint/quality.rs", symbol = "file_anchors_only" },
-    { file = "src/tools/status/lint/mod.rs", symbol = "LintItem" },
+    { file = "src/tools/status/lint/finding.rs", symbol = "LintItem" },
     { file = "tests/integration/lint.rs", symbol = "graph" },
 ]
 depends_on = [

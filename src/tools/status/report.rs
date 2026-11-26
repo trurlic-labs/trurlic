@@ -2,14 +2,17 @@
 //! JSON: the counts, and each section as the items that fit out of its
 //! total.
 
-use crate::store::{IssueKind, Placement};
-
-use super::Part;
-use super::anchors::{AnchorCounts, AnchorItem};
-use super::lint::{LintCounts, LintItem};
-
-use crate::tools::spec::output::{Count, Nested, Str, Tag};
+use crate::store::Placement;
+use crate::tools::spec::output::{Nested, Str, Tag};
 use crate::tools::spec::{Output, Shown};
+
+use super::anchors::AnchorItem;
+use super::components::ComponentItem;
+use super::counts::{Counts, QualityCounts};
+use super::history::HistoryItem;
+use super::issues::IssueItem;
+use super::lint::LintItem;
+use super::part::Part;
 
 /// What `status` answers.
 pub(crate) struct Report {
@@ -26,63 +29,6 @@ pub(crate) struct Report {
     pub(crate) components: Option<Part<ComponentItem>>,
     pub(crate) lint: Option<Part<LintItem>>,
     pub(crate) anchors: Option<Part<AnchorItem>>,
-}
-
-pub(crate) struct Counts {
-    pub(crate) components: usize,
-    pub(crate) decisions: usize,
-    pub(crate) project_wide: usize,
-    pub(crate) proposed: usize,
-    pub(crate) edges: usize,
-    pub(crate) issues: usize,
-    pub(crate) non_canonical: usize,
-    pub(crate) lint: Option<LintCounts>,
-    /// The anchor findings by kind, when the report has the section.
-    pub(crate) anchors: Option<AnchorCounts>,
-}
-
-/// What `[quality]` adds to the built-in rules, counted.
-pub(crate) struct QualityCounts {
-    /// The limits set, `require_origin` among them.
-    pub(crate) limits: usize,
-    pub(crate) refusing: usize,
-    pub(crate) warning: usize,
-}
-
-pub(crate) struct IssueItem {
-    pub(crate) kind: IssueKind,
-    pub(crate) message: String,
-}
-
-pub(crate) struct HistoryItem {
-    pub(crate) kind: HistoryKind,
-    pub(crate) message: String,
-}
-
-/// The kind of a history finding, one per `HistoryFinding` variant.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum HistoryKind {
-    Missing,
-    IndexLocked,
-    Uncommitted,
-}
-
-impl HistoryKind {
-    const ALL: [Self; 3] = [Self::Missing, Self::IndexLocked, Self::Uncommitted];
-
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Missing => "missing",
-            Self::IndexLocked => "index_locked",
-            Self::Uncommitted => "uncommitted",
-        }
-    }
-}
-
-pub(crate) struct ComponentItem {
-    pub(crate) name: String,
-    pub(crate) decisions: usize,
-    pub(crate) proposed: usize,
 }
 
 const PLACEMENT: Tag<Placement> = Tag {
@@ -145,106 +91,4 @@ fn declare_sections(fields: &mut Shown<'_, Report>) {
                    decision, anchor.";
     let kind = Nested::<Part<AnchorItem>>::new();
     fields.optional("anchors", anchors, &kind, |report| report.anchors.as_ref());
-}
-
-impl Output for Counts {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        fields.required("components", "Components.", &Count, |counts| {
-            &counts.components
-        });
-        fields.required(
-            "decisions",
-            "Decisions, under `origin` when given.",
-            &Count,
-            |counts| &counts.decisions,
-        );
-        fields.required(
-            "project_wide",
-            "Of them, the project-wide.",
-            &Count,
-            |counts| &counts.project_wide,
-        );
-        fields.required("proposed", "Of them, the proposed.", &Count, |counts| {
-            &counts.proposed
-        });
-        fields.required(
-            "edges",
-            "`connects_to` and `depends_on` edges.",
-            &Count,
-            |counts| &counts.edges,
-        );
-        fields.required("issues", "Validation issues.", &Count, |counts| {
-            &counts.issues
-        });
-        fields.required(
-            "non_canonical",
-            "Files `trurlic fmt` would rewrite.",
-            &Count,
-            |counts| &counts.non_canonical,
-        );
-        let lint = "The `lint` findings of each kind, when the section is asked for.";
-        let kind = Nested::<LintCounts>::new();
-        fields.optional("lint", lint, &kind, |counts| counts.lint.as_ref());
-        let anchors = "The anchor findings by kind, under `origin` when given, when the \
-                       report has the `anchors` section.";
-        let kind = Nested::<AnchorCounts>::new();
-        fields.optional("anchors", anchors, &kind, |counts| counts.anchors.as_ref());
-    }
-}
-
-impl Output for QualityCounts {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        let limits = "Limits set: `reason_words` bounds, the maxima, `require_origin`.";
-        fields.required("limits", limits, &Count, |counts| &counts.limits);
-        let refusing = "Patterns that refuse a write.";
-        fields.required("refusing", refusing, &Count, |counts| &counts.refusing);
-        let warning = "Patterns that warn in the result.";
-        fields.required("warning", warning, &Count, |counts| &counts.warning);
-    }
-}
-
-impl Output for IssueItem {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        let kind = Tag {
-            all: &IssueKind::ALL,
-            name: IssueKind::as_str,
-        };
-        fields.required("kind", "The issue's kind.", &kind, |item| &item.kind);
-        fields.required(
-            "message",
-            "The file at fault, then the fault.",
-            &Str,
-            |item| &item.message,
-        );
-    }
-}
-
-impl Output for HistoryItem {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        let kind = Tag {
-            all: &HistoryKind::ALL,
-            name: HistoryKind::as_str,
-        };
-        fields.required("kind", "The finding's kind.", &kind, |item| &item.kind);
-        fields.required(
-            "message",
-            "What is lacking and what mends it.",
-            &Str,
-            |item| &item.message,
-        );
-    }
-}
-
-impl Output for ComponentItem {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        fields.required("name", "The component, or `project`.", &Str, |item| {
-            &item.name
-        });
-        fields.required("decisions", "Its decisions.", &Count, |item| {
-            &item.decisions
-        });
-        fields.required("proposed", "Of them, the proposed.", &Count, |item| {
-            &item.proposed
-        });
-    }
 }

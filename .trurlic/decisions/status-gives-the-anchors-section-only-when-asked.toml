@@ -12,7 +12,7 @@ anchors = [
     { file = "benches/corpus.rs", symbol = "bench_code_index" },
     { file = "src/tools/status/anchors.rs", symbol = "AnchorItem" },
     { file = "src/tools/status/anchors.rs", symbol = "anchor_section" },
-    { file = "src/tools/status/mod.rs", symbol = "Section::Anchors" },
+    { file = "src/tools/status/section.rs", symbol = "Section::Anchors" },
     { file = "tests/integration/anchors.rs", symbol = "status_asks_the_project_s_git_nothing" },
     { file = "tests/integration/anchors.rs", symbol = "status_lists_each_finding_with_its_kind_and_cause" },
 ]

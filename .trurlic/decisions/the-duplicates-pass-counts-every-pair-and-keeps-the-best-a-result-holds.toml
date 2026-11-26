@@ -14,7 +14,7 @@ anchors = [
     { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::selection" },
     { file = "src/lint/duplicates/tests.rs", symbol = "on_a_dense_graph_the_best_pairs_are_kept_and_every_pair_counted" },
     { file = "src/lint/duplicates/tests.rs", symbol = "the_pairs_are_the_same_on_any_number_of_threads" },
-    { file = "src/tools/status/lint/mod.rs", symbol = "lint_limit" },
+    { file = "src/tools/status/lint/finding.rs", symbol = "lint_limit" },
 ]
 depends_on = [
     "duplicate-pairs-come-from-an-inverted-index-over-every-term",

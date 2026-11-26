@@ -14,7 +14,7 @@ anchors = [
     { file = "src/commands/status.rs", symbol = "print" },
     { file = "src/store/write/history.rs", symbol = "HistoryFinding" },
     { file = "src/store/write/history.rs", symbol = "Store::history_findings" },
-    { file = "src/tools/status/mod.rs", symbol = "history_item" },
+    { file = "src/tools/status/history.rs", symbol = "history_item" },
 ]
 depends_on = [
     "uncommitted-covers-the-graph-files-one-level-deep-never-state-or-another-file",

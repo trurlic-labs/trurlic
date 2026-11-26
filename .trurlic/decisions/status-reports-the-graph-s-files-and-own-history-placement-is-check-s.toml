@@ -9,8 +9,8 @@ origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
     { file = "src/commands/check.rs", symbol = "check" },
-    { file = "src/tools/status/mod.rs", symbol = "quality_counts" },
-    { file = "src/tools/status/mod.rs", symbol = "status" },
+    { file = "src/tools/status/counts.rs", symbol = "quality_counts" },
+    { file = "src/tools/status/tool.rs", symbol = "status" },
 ]
 depends_on = [
     "check-refuses-a-placement-git-contradicts-and-a-second-graph",

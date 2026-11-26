@@ -12,7 +12,7 @@ use crate::tools::spec::output::{Count, Nested, Str, Tag};
 use crate::tools::spec::{Output, Shown};
 
 use crate::tools::result::ToolError;
-use crate::tools::status::Section;
+use crate::tools::status::section::Section;
 
 /// The decisions the `[quality]` patterns read, why they read no more, and
 /// where the next page starts.
@@ -360,7 +360,7 @@ mod tests {
     use crate::store::testing::OUTGROWS_ITS_CACHE;
     use crate::tools::result::ToolResult;
     use crate::tools::spec::to_value;
-    use crate::tools::status::{StatusArgs, status};
+    use crate::tools::status::tool::{StatusArgs, status};
 
     /// The patterns' reading of `d0` to `d5`, stopped for `why` before
     /// `next`.
@@ -431,10 +431,9 @@ mod tests {
     /// first `room`: the decisions listed, what was omitted, and the counts.
     fn page_of(decisions: Vec<&'static str>, room: usize) -> (Vec<String>, usize, PatternCounts) {
         use crate::store::Level;
-        use crate::tools::status::lint::{
-            LintCounts, LintItem, LintItems, LintKind, Page, QualityItem, fitted,
-        };
-        use crate::tools::status::{Listed, Part};
+        use crate::tools::status::lint::finding::{LintItem, LintKind, QualityItem};
+        use crate::tools::status::lint::gather::{LintCounts, LintItems, Page, fitted};
+        use crate::tools::status::part::{Listed, Part};
 
         let item = |decision: &str| {
             LintItem::Quality(QualityItem {
