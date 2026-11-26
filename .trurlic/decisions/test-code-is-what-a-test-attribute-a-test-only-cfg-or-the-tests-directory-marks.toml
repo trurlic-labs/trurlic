@@ -11,7 +11,7 @@ tags = [
     "anchors",
     "testing",
 ]
-status = "proposed"
+status = "accepted"
 origin = "definition kinds"
 created = "2026-11-24T10:33:26.877207089Z"
 anchors = [

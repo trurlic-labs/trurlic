@@ -8,7 +8,7 @@ alternatives = [
 tags = [
     "anchors",
 ]
-status = "proposed"
+status = "accepted"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"
 anchors = [

@@ -9,7 +9,7 @@ tags = [
     "anchors",
     "determinism",
 ]
-status = "proposed"
+status = "accepted"
 origin = "code index review"
 created = "2026-11-24T11:27:16.681896640Z"
 anchors = [

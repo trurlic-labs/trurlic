@@ -12,7 +12,7 @@ tags = [
     "concurrency",
     "performance",
 ]
-status = "proposed"
+status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [

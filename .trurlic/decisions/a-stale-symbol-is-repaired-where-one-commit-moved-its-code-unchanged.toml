@@ -10,7 +10,7 @@ tags = [
     "anchors",
     "lint",
 ]
-status = "proposed"
+status = "accepted"
 origin = "anchor repair review"
 created = "2026-11-26T07:48:25.688106240Z"
 anchors = [

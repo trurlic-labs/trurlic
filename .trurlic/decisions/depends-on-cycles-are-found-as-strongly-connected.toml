@@ -10,7 +10,7 @@ tags = [
     "determinism",
     "integrity",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-10-02T12:57:49.182012916Z"
 anchors = [
     { file = "src/store/apply/edit.rs", symbol = "Edit::new_cycle" },

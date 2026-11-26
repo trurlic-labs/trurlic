@@ -12,7 +12,7 @@ tags = [
     "anchors",
     "hashing",
 ]
-status = "proposed"
+status = "accepted"
 origin = "code index review fixes"
 created = "2026-11-25T17:10:51.306704636Z"
 anchors = [

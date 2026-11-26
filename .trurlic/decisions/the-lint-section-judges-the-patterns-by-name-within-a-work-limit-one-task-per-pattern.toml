@@ -12,7 +12,7 @@ tags = [
     "performance",
     "quality",
 ]
-status = "proposed"
+status = "accepted"
 origin = "quality findings: bounded pattern judging"
 created = "2026-11-25T15:38:56.432762268Z"
 anchors = [

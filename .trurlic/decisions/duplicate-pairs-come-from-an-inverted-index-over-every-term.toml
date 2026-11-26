@@ -11,7 +11,7 @@ alternatives = [
 tags = [
     "performance",
 ]
-status = "proposed"
+status = "accepted"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"
 anchors = [
@@ -27,15 +27,4 @@ anchors = [
 ]
 depends_on = [
     "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",
-]
-
-[accepted_text]
-choice = "Duplicate pairs come from an inverted index over every term: a decision sums its exact dot product with each earlier one sharing a term, then takes the exact test"
-reason = "status computes every section when none is asked for and is called often, so the pass must not compute a dot product for every pair of decisions. The postings list, per term, the decisions that hold it in order, with the term's weight there. Each decision reads the postings of its terms up to itself, adds the products of the weights into a scratch row sized to the graph, and puts each decision it touched to the exact threshold test with that sum, which is their exact dot product. A pair that shares no term is never visited, and no pair allocates. The probes run on the thread pool, each task with its own scratch and selection. A prefix filter that left each decision's most common terms out of the index, with a Cauchy-Schwarz bound to prune candidates, ran within a small factor of this on the seeded corpus, and both are quadratic when every text is the same, so its second order, cursors and bound did not earn their code. The vocabulary that names the terms is a BTreeMap, as every map of the crate. A test holds the pairs to the exact test over every pair on drawn graphs."
-alternatives = [
-    "A dot product for every pair: rejected because it grows with the square of the decisions times their terms, many times slower than the index on the seeded corpus",
-    "A prefix filter over terms ranked most common first, pruned by a Cauchy-Schwarz bound: rejected because it saved less than half the pass for a second order, cursors and a bound whose exactness rests on two comparisons",
-    "A HashMap vocabulary, the one exception to the BTree rule: rejected because it saved a fraction of the vector build for an exception every reader must check is never iterated",
-    "Locality-sensitive hashing: rejected because it can miss a pair, and the list must be the exact one",
-    "A cache under .state: rejected because a read would then depend on state beside the files",
 ]

@@ -13,7 +13,7 @@ tags = [
     "history",
     "reliability",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::GraphIndexLocked" },

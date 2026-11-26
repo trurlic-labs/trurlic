@@ -10,7 +10,7 @@ alternatives = [
 tags = [
     "quality",
 ]
-status = "proposed"
+status = "accepted"
 origin = "quality findings"
 created = "2026-11-24T11:30:37.585834133Z"
 anchors = [

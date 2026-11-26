@@ -10,7 +10,7 @@ tags = [
     "api",
     "quality",
 ]
-status = "proposed"
+status = "accepted"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [

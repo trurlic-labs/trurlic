@@ -12,7 +12,7 @@ tags = [
     "performance",
     "quality",
 ]
-status = "proposed"
+status = "accepted"
 origin = "apply: a batch's pattern work is bounded"
 created = "2026-11-25T16:43:33.912873622Z"
 anchors = [

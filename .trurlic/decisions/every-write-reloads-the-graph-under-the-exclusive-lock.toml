@@ -12,7 +12,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-10-02T11:35:08.670219118Z"
 anchors = [
     { file = "src/commands/fmt.rs", symbol = "fmt" },

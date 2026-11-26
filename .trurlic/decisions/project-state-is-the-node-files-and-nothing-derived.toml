@@ -11,7 +11,7 @@ tags = [
     "data-structures",
     "performance",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "benches/corpus.rs", symbol = "bench_read_tools" },

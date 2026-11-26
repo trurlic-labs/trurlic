@@ -10,7 +10,7 @@ tags = [
     "api",
     "error-handling",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-10-03T13:55:11.254367052Z"
 anchors = [
     { file = "clippy.toml" },

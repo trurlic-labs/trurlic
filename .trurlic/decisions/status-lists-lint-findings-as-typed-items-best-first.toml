@@ -8,7 +8,7 @@ alternatives = [
 tags = [
     "api",
 ]
-status = "proposed"
+status = "accepted"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"
 anchors = [

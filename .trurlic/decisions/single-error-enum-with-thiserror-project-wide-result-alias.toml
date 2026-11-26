@@ -11,22 +11,11 @@ alternatives = [
 tags = [
     "error-handling",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-06-15T09:47:24.656812573Z"
 anchors = [
     { file = "src/commands/apply.rs", symbol = "apply" },
     { file = "src/commands/install.rs", symbol = "InstallError" },
     { file = "src/error.rs", symbol = "Error" },
     { file = "src/mcp/result.rs", symbol = "ToolError" },
-]
-
-[accepted_text]
-choice = "One Error enum with thiserror and a crate-wide Result alias; only install returns an error type of its own"
-reason = """
-Every module and every command except install uses the one Error enum (src/error.rs) with #[derive(thiserror::Error)] and a type alias Result<T> = std::result::Result<T, Error>; there is no separate store error. Every variant has a descriptive #[error(\"...\")] message. A failure that comes from a file names it: Error::Io { path, source } and Error::Toml { path, source } print the path first, and there is no From impl for std::io::Error or the toml errors, so a ? cannot drop the path. Error::io(path) and Error::toml(path) are the map_err adapters. An I/O call with no file behind it (a standard stream, the working directory, the path of the running binary) is Error::System { what, source }, naming the call. Cases callers branch on are data, not sentences: VersionMismatch, NoMigration and BadFormatVersion, which MCP reports as unsupported_format; NodeTooLarge { path, max }; InvalidPath { path, fault } with the AnchorFault; CheckFailed with the issue count; PlacementUnknown with its PlacementDoubt and ConstrainsCycle with the cycle's members, the two refusals of migrate. A git invocation that cannot run is GitMissing or GitSpawn, and one that fails is GitFailed with its directory, arguments, exit status and stderr. The error module imports types from store alone. trurlic install, which never opens a store, returns commands::install's InstallError, which wraps Error for its I/O; Error has no variant for it.
-"""
-alternatives = [
-    "Per-module error types with conversions: rejected because the crate is a single binary and the added indirection provides no benefit",
-    "Use anyhow for ad-hoc errors: rejected because typed errors enable match-based handling and better compile-time guarantees",
-    "A GitError type of the git module that Error wraps: rejected because Error would then name a module that is not store, and a public Error variant cannot hold a crate-private type",
 ]

@@ -10,7 +10,7 @@ tags = [
     "matching",
     "migration",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
     { file = "src/store/migration/format_0_5.rs", symbol = "decision" },

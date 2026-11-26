@@ -12,7 +12,7 @@ tags = [
     "determinism",
     "integrity",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-10-02T12:57:55.359394005Z"
 anchors = [
     { file = "src/store/validate.rs", symbol = "Issue" },

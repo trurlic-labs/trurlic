@@ -10,7 +10,7 @@ tags = [
     "python",
     "reliability",
 ]
-status = "proposed"
+status = "accepted"
 origin = "languages as query files"
 created = "2026-11-25T18:04:58.425308845Z"
 anchors = [

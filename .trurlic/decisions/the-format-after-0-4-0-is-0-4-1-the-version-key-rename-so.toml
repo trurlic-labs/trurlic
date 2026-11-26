@@ -11,7 +11,7 @@ tags = [
     "migration",
     "storage",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-23T22:52:37.726409013Z"
 anchors = [
     { file = "src/store/migration/steps.rs", symbol = "STEPS" },

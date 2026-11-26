@@ -10,7 +10,7 @@ tags = [
     "anchors",
     "parsing",
 ]
-status = "proposed"
+status = "accepted"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [

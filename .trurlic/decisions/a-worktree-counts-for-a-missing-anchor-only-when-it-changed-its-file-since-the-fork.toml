@@ -13,7 +13,7 @@ tags = [
     "git",
     "performance",
 ]
-status = "proposed"
+status = "accepted"
 origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"
 anchors = [

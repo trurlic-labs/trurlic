@@ -11,7 +11,7 @@ tags = [
     "anchors",
     "apply",
 ]
-status = "proposed"
+status = "accepted"
 origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"
 anchors = [

@@ -10,7 +10,7 @@ tags = [
     "api",
     "error-handling",
 ]
-status = "proposed"
+status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [

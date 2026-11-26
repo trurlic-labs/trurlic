@@ -11,7 +11,7 @@ tags = [
     "anchors",
     "grammar",
 ]
-status = "proposed"
+status = "accepted"
 origin = "symbol sets"
 created = "2026-11-25T16:09:32.096681384Z"
 anchors = [
