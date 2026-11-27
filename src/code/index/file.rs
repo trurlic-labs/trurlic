@@ -1,12 +1,14 @@
 //! A file's index: the scopes of its paths, the definitions it holds,
-//! each with its scope, what it is, its span and span hash, and for Rust
-//! the module files a second step follows. An index is a function of the
-//! file's kind and bytes alone, so a cache keyed by the two holds it
-//! whatever path or tree the bytes are under.
+//! each with its scope, what it is, its span and span hash, for Rust the
+//! module files a second step follows, and for a Cargo manifest what it
+//! states of its crate. An index is a function of the file's kind and
+//! bytes alone, so a cache keyed by the two holds it whatever path or
+//! tree the bytes are under.
 
 use std::fmt;
 
 use super::kinds::{DefinitionKind, Role, Visibility};
+use super::manifest::Manifest;
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::{Span, SpanHash};
 
@@ -158,6 +160,22 @@ pub(crate) struct FileIndex {
     pub(crate) definitions: Vec<Definition>,
     /// Empty for every kind but Rust.
     pub(in crate::code) rust: RustFacts,
+    /// `None` for every file but a TOML document cargo reads as a
+    /// manifest. Boxed, so the index of every other file carries a
+    /// pointer, not a manifest's size, for what one file in many holds.
+    pub(in crate::code) manifest: Option<Box<Manifest>>,
+}
+
+impl FileIndex {
+    /// The index of a file that defines and declares nothing.
+    pub(in crate::code) const EMPTY: Self = Self {
+        scopes: Vec::new(),
+        definitions: Vec::new(),
+        rust: RustFacts {
+            module_files: Vec::new(),
+        },
+        manifest: None,
+    };
 }
 
 /// What a Rust file holds besides its definitions: the modules declared

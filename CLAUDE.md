@@ -72,6 +72,8 @@ purity     → code (tests only)           what a module's non-test code may nam
 | A language beyond Rust: grammar, query, test places, pre-parse bounds | `code/parse/language/row.rs`, `code/parse/language/<name>.scm`, `code/parse/language/<name>.rs` |
 | C and C++ macros blanked before the parse: the per-file pass / the sets / the headers gathered and the passes cached | `code/parse/language/c_family/define.rs`, `blank.rs` / `c_family/set.rs` / `sources/reads.rs`, `sources/lexical.rs` |
 | Span-hash units and hashing | `code/parse/units/` |
+| What a Cargo manifest states, in a TOML index / read by | `code/index/manifest.rs` / `code/lexical/manifest.rs` |
+| The `mod` walk / a file's place / the crates and their edges / the code tree | `code/facts/walk.rs` / `places.rs` / `crate_graph.rs` / `tree.rs` |
 | Query contract / general resolver | `code/parse/query/` / `code/parse/general/` |
 | Failpoint sites | `failpoint.rs` |
 
@@ -125,6 +127,7 @@ purity     → code (tests only)           what a module's non-test code may nam
 - Failpoints: `TRURLIC_FAILPOINT=<site>:<n>` (`TRURLIC_FAILPOINT_PAUSE` to pause instead of abort).
 - Format fixtures: `tests/fixtures/formats/<version>/`, each migrated, loaded and checked.
 - Code fixtures: `tests/fixtures/code/`; manifests are named `Cargo.toml.fixture`.
+- Places fixture: `tests/fixtures/places.txt`, each Rust file of this crate's own targets (`src/`, `benches/`, `tests/` but `tests/fixtures/`) with its crate and module, checked by hand: a Rust file added or moved there changes it.
 - Prose fixture: `tests/fixtures/prose/`, fixed English decision text the `[quality]` caches are sized on.
 - Seeded corpus (`store::corpus`, `store::corpus::seeded`) feeds property tests and benches.
 - No test for coverage: each asserts a property someone could break.

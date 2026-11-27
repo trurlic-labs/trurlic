@@ -1,11 +1,13 @@
 //! The one way into an index: every resolver enters its scopes and
-//! admits its definitions and module files through the scope tree, which
-//! charges each what its entry costs against the room of the file
-//! ([`encoding::room_of`]), so no rule of any resolver can make an index
-//! outgrow its file, and refuses a path past [`MAX_NESTING`] segments.
+//! admits its definitions, module files and manifest through the scope
+//! tree, which charges each what its entry costs against the room of the
+//! file ([`encoding::room_of`]), so no rule of any resolver can make an
+//! index outgrow its file, and refuses a path past [`MAX_NESTING`]
+//! segments.
 
 use super::encoding::{self, Measure};
 use super::file::{Definition, FileKind, IndexFault, ModuleFile};
+use super::manifest::Manifest;
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::Span;
 use super::symbol::Segment;
@@ -70,6 +72,13 @@ impl ScopeTree {
         self.charge(Measure::module_file(module))
     }
 
+    pub(in crate::code) fn admit_manifest(
+        &mut self,
+        manifest: &Manifest,
+    ) -> Result<(), IndexFault> {
+        self.charge(Measure::manifest(manifest))
+    }
+
     fn charge(&mut self, bytes: usize) -> Result<(), IndexFault> {
         self.room = self.room.checked_sub(bytes).ok_or(IndexFault::TooComplex)?;
         Ok(())
@@ -123,5 +132,27 @@ mod tests {
             Err(IndexFault::TooComplex)
         );
         assert!(tree.enter(None, vec![Segment::name("n")]).is_ok());
+    }
+
+    #[test]
+    fn a_manifest_past_the_files_room_is_refused() {
+        let manifest = |path: &str| Manifest {
+            package: None,
+            workspace: Some(crate::code::index::Workspace {
+                dependencies: Vec::new(),
+                exclude: vec![path.to_owned()],
+            }),
+        };
+        let room = encoding::room_of(FileKind::Toml, 2);
+
+        assert_eq!(
+            ScopeTree::for_file(FileKind::Toml, 2).admit_manifest(&manifest(&"p".repeat(room))),
+            Err(IndexFault::TooComplex)
+        );
+        assert!(
+            ScopeTree::for_file(FileKind::Toml, 2)
+                .admit_manifest(&manifest("p"))
+                .is_ok()
+        );
     }
 }

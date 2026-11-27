@@ -25,9 +25,9 @@ mod parse;
 pub(crate) mod testing;
 
 pub(crate) use dispatch::{BOUNDS, INDEX_FORMAT, index};
-#[cfg(test)]
-pub(crate) use facts::Target;
 pub(crate) use facts::{Code, CodeFacts, Entry, FileFault, MANIFEST, ReadFault, Resolution};
+#[cfg(test)]
+pub(crate) use facts::{CodeTree, Node, Target};
 #[cfg(test)]
 pub(crate) use index::SpanHash;
 pub(crate) use index::{

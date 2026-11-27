@@ -133,6 +133,21 @@ fn the_densest_file_of_each_kind_is_indexed_within_its_room() {
     }
 }
 
+/// A manifest that states each fact a manifest's entry holds.
+const MANIFEST: &str = "\
+[package]
+name = 'a'
+workspace = '..'
+[dependencies]
+b = { path = '../b' }
+c = { workspace = true }
+[workspace]
+exclude = ['old']
+[workspace.dependencies]
+d = { path = 'd' }
+e = '1'
+";
+
 #[test]
 fn every_entry_a_write_makes_reads_back() {
     let variants = format!("enum E {{ {} }}", "A, ".repeat(5_000));
@@ -140,6 +155,16 @@ fn every_entry_a_write_makes_reads_back() {
     let cases = [
         ("variants".to_owned(), FileKind::Rust, variants.into_bytes()),
         ("names".to_owned(), FileKind::Python, names.into_bytes()),
+        (
+            "manifest".to_owned(),
+            FileKind::Toml,
+            MANIFEST.as_bytes().to_vec(),
+        ),
+        (
+            "virtual".to_owned(),
+            FileKind::Toml,
+            b"[workspace]\n".to_vec(),
+        ),
     ];
     for (name, kind, bytes) in &cases {
         let indexed = crate::code::testing::index(*kind, bytes);
@@ -190,6 +215,14 @@ fn bytes_that_break_the_form_are_no_index() {
     for cut in 0..bytes.len() {
         assert_eq!(decoded(&bytes[..cut]), None, "cut at {cut}");
     }
+    let manifest = encode(&crate::code::testing::index(
+        FileKind::Toml,
+        MANIFEST.as_bytes(),
+    ));
+    for cut in 0..manifest.len() {
+        let decoded = decode(&manifest[..cut], FileKind::Toml, MANIFEST.len());
+        assert_eq!(decoded, None, "manifest cut at {cut}");
+    }
     let mut longer = bytes.clone();
     longer.push(0);
     assert_eq!(decoded(&longer), None);
@@ -202,7 +235,7 @@ fn bytes_that_break_the_form_are_no_index() {
 }
 
 /// An entry of `scopes` scopes of one segment of a one-byte name each,
-/// and nothing else: five bytes apiece.
+/// and nothing else: five bytes apiece, and no manifest.
 fn forged(scopes: usize) -> Vec<u8> {
     let mut forged = vec![0];
     let mut count = scopes;
@@ -214,7 +247,7 @@ fn forged(scopes: usize) -> Vec<u8> {
     for _ in 0..scopes {
         forged.extend([0, 1, 0, 1, b'a']);
     }
-    forged.extend([0, 0]);
+    forged.extend([0, 0, 0]);
     forged
 }
 
@@ -231,7 +264,7 @@ fn malloc(n: usize) -> usize {
 /// 48-byte segment and one of its one-byte name.
 fn resident(scopes: usize) -> usize {
     let count = (usize::BITS - scopes.leading_zeros()).div_ceil(7).max(1) as usize;
-    let entry = 1 + count + 5 * scopes + 2;
+    let entry = 1 + count + 5 * scopes + 3;
     entry + malloc(scopes * 32) + malloc(scopes * 8) + scopes * (64 + 32)
 }
 
@@ -260,7 +293,7 @@ fn a_file_past_its_kinds_size_reads_back_its_fault_alone() {
         decode(&encode(&fault), FileKind::Rust, size + 1),
         Some(fault)
     );
-    assert_eq!(decode(&forged(1), FileKind::Rust, size + 1), None);
+    assert_eq!(decode(&forged(0), FileKind::Rust, size + 1), None);
 }
 
 /// What [`Measure`] charges for what `index` holds, its counts added:
@@ -289,6 +322,7 @@ fn measured(index: &FileIndex) -> usize {
             .iter()
             .map(Measure::module_file)
             .sum::<usize>()
+        + index.manifest.as_deref().map_or(0, Measure::manifest)
 }
 
 #[test]
@@ -311,6 +345,10 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
     let headings = "# a\n".repeat(25_000);
     let keys = format!("{{{}\"z\":0}}", "\"a\":0,".repeat(20_000));
     let tables: String = (0..10_000).map(|n| format!("[a{n}]\nb=0\n")).collect();
+    let dependencies: String = (0..20_000)
+        .map(|n| format!("a{n}.path=''\nb{n}.workspace=true\n"))
+        .collect();
+    let manifest = format!("[package]\n[dependencies]\n{dependencies}");
     let nested = format!("{}{}", "mod m{".repeat(60), "}".repeat(60));
     let names = format!("{}z = 0\n", "a,".repeat(50_000));
     let lines = "x=1\n".repeat(50_000);
@@ -328,6 +366,7 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
         (FileKind::Markdown, headings.as_str()),
         (FileKind::Json, keys.as_str()),
         (FileKind::Toml, tables.as_str()),
+        (FileKind::Toml, manifest.as_str()),
         (FileKind::Python, names.as_str()),
         (FileKind::Python, lines.as_str()),
         (FileKind::Rust, ""),

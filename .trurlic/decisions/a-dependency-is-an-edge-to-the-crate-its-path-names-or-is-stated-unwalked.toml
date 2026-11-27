@@ -1,0 +1,18 @@
+component = "code"
+choice = "A dependency resolves as cargo resolves it, members aside, kept apart by kind (normal, dev, build); one that does not resolve is stated as an endpoint, never dropped"
+reason = "A path is read from the directory that writes it. A workspace = true entry wins over a path beside it, as in cargo, and is read through its root. That root is the directory package.workspace names, taken as named. Else the search goes up to the first Cargo.toml with a [workspace] whose exclude does not cover the one depending, or to a package whose package.workspace names a root. An exclude entry is a plain path from its root; one with a .. segment covers nothing, as cargo compares it as written. members is not read, so what both name is skipped where cargo keeps it. An unread Cargo.toml ends the search, as what it states is unknown. The root's [workspace.dependencies] entry of the name gives the path. A path to a directory the walk holds no Cargo.toml in is Endpoint::Unwalked, as written. No root found is NoWorkspaceRoot, and a name the root does not hold NotInWorkspace, so the view shows what does not resolve. A root entry with no path is a registry or git dependency and no edge. Dev and build entries stay apart from normal ones: a test-only edge is no dependency of the code."
+alternatives = [
+    "Drop what does not resolve: rejected because a dependency outside the tree would vanish from the view with no trace",
+    "One kind of edge: rejected because a dev-dependency cycle between a crate and its test helpers would read as a cycle in the code",
+    "Read members too: rejected because a crate both members and exclude name is rare, and members are globs that would need a matcher of their own",
+]
+status = "proposed"
+origin = "a file's place and the crates in the code index"
+created = "2026-11-27T21:24:16.080164756Z"
+anchors = [
+    { file = "src/code/facts/crate_graph.rs", symbol = "Edge" },
+    { file = "src/code/facts/crate_graph.rs", symbol = "Endpoint" },
+    { file = "src/code/facts/crate_graph.rs", symbol = "Graph::excludes" },
+    { file = "src/code/facts/crate_graph.rs", symbol = "Graph::named_root" },
+    { file = "src/code/facts/crate_graph.rs", symbol = "Graph::workspace_root" },
+]

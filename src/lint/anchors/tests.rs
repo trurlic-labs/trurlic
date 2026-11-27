@@ -1,6 +1,7 @@
 use super::finding::{Broken, Missing, Unread};
-use super::testing::{decision, facts};
+use super::testing::decision;
 use super::*;
+use crate::code::testing::facts;
 use crate::code::{CodeFacts, Entry, FileFault, FileKind, ReadFault, Resolution};
 use crate::store::{Decision, Status, StatusName};
 

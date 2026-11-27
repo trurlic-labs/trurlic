@@ -8,7 +8,7 @@ use super::findings::{checked_findings, tree_findings};
 use super::reads::{Reads, Scope, read_paths, read_tree};
 use super::repair::{Seen, still_holding};
 use super::source::MAX_SOURCE_FILE_BYTES;
-use crate::code::{CodeFacts, FileKind, Resolution, SpanHash, Target};
+use crate::code::{CodeFacts, CodeTree, FileKind, Node, Resolution, SpanHash, Target};
 use crate::store::testing::setup_store;
 use crate::store::{Anchor, Store, SymbolsKey};
 
@@ -772,6 +772,9 @@ fn statements(facts: &CodeFacts) -> Vec<String> {
 const STATEMENTS: &[&str] = &[
     "Cargo.toml workspace Key Code -",
     "Cargo.toml workspace::members Key Code -",
+    "Cargo.toml workspace::dependencies Key Code -",
+    "Cargo.toml workspace::dependencies::ledger Key Code -",
+    "Cargo.toml workspace::dependencies::ledger::path Key Code -",
     "Cargo.toml workspace::lints::clippy Key Code -",
     "Cargo.toml workspace::lints Key Code -",
     "Cargo.toml workspace::lints::clippy::unwrap_used Key Code -",
@@ -1053,6 +1056,22 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules/in_body.rs reached_by_test Function Test Public",
     "crates/ledger/tests/flow.rs opened_book Function Test Private",
     "crates/ledger/tests/flow.rs a_book_opens Function Test Private",
+    "crates/shelf/Cargo.toml package Key Code -",
+    "crates/shelf/Cargo.toml package::name Key Code -",
+    "crates/shelf/Cargo.toml dependencies Key Code -",
+    "crates/shelf/Cargo.toml dependencies::ledger Key Code -",
+    "crates/shelf/Cargo.toml dependencies::ledger::workspace Key Code -",
+    "crates/shelf/Cargo.toml dev-dependencies Key Code -",
+    "crates/shelf/Cargo.toml dev-dependencies::tally Key Code -",
+    "crates/shelf/Cargo.toml dev-dependencies::tally::path Key Code -",
+    "crates/tally/Cargo.toml package Key Code -",
+    "crates/tally/Cargo.toml package::name Key Code -",
+    "crates/tally/Cargo.toml dependencies Key Code -",
+    "crates/tally/Cargo.toml dependencies::ledger Key Code -",
+    "crates/tally/Cargo.toml dependencies::ledger::path Key Code -",
+    "crates/tally/Cargo.toml build-dependencies Key Code -",
+    "crates/tally/Cargo.toml build-dependencies::stamp Key Code -",
+    "crates/tally/Cargo.toml build-dependencies::stamp::path Key Code -",
     "docs/guide.md Guide Heading Code -",
     "docs/guide.md Guide::Install Heading Code -",
     "docs/guide.md Guide::Install::From source Heading Code -",
@@ -1524,4 +1543,121 @@ fn an_edit_of_a_header_indexes_anew_exactly_the_files_whose_index_it_changes() {
     for (name, files, edit, want) in edits {
         assert_eq!(after_edit(files, edit), (want, true), "{name}");
     }
+}
+
+/// `node` and every node below it, one a line, each indented one step
+/// past the node that holds it.
+fn subtree<'i>(tree: &CodeTree<'i>, node: Node<'i>, depth: usize) -> Vec<String> {
+    let mut lines = vec![format!(
+        "{}{}",
+        "  ".repeat(depth),
+        tree.spelled_node(&node)
+    )];
+    for child in tree.children(Some(node)) {
+        lines.extend(subtree(tree, *child, depth + 1));
+    }
+    lines
+}
+
+#[test]
+fn the_crates_of_the_fixture_workspace_are_its_manifests_with_their_edges() {
+    let (_tmp, store) = fixture_tree();
+    let facts = gather(&store, std::iter::empty());
+    let tree = CodeTree::of(&facts);
+    let crates: Vec<String> = tree
+        .children(None)
+        .iter()
+        .map(|node| match node {
+            Node::Crate(Some(dir)) => tree.spelled_crate(dir),
+            other => tree.spelled_node(other),
+        })
+        .collect();
+
+    assert_eq!(
+        crates,
+        [
+            " None: ",
+            "crates/ledger Some(\"ledger\"): ",
+            "crates/shelf Some(\"shelf\"): \
+             Normal Crate(\"crates/ledger\"), Dev Crate(\"crates/tally\")",
+            "crates/tally Some(\"tally\"): \
+             Normal Crate(\"crates/ledger\"), Build Unwalked(\"../../../stamp\")",
+        ]
+    );
+}
+
+#[test]
+fn a_python_and_a_c_tree_are_their_directory_trees() {
+    let (_tmp, store) = fixture_tree();
+    let facts = gather(&store, std::iter::empty());
+    let tree = CodeTree::of(&facts);
+    let directory = |dir| Node::Directory {
+        crate_dir: Some(""),
+        dir,
+    };
+
+    assert_eq!(
+        subtree(&tree, directory("python"), 0),
+        [
+            "directory python",
+            "  directory python/tests",
+            "    file python/tests/builders.py",
+            "  file python/checks.py",
+            "  file python/conftest.py",
+            "  file python/gui.pyw",
+            "  file python/shelf.py",
+            "  file python/shelf.pyi",
+            "  file python/test_shelf.py",
+        ]
+    );
+    assert_eq!(
+        subtree(&tree, directory("c"), 0),
+        [
+            "directory c",
+            "  directory c/tests",
+            "    file c/tests/shelf_check.c",
+            "  file c/shelf.c",
+            "  file c/shelf.h",
+        ]
+    );
+}
+
+/// Each Rust file of this crate's own targets, under `src/`, `benches/`
+/// and `tests/` but for `tests/fixtures/`, with its place, checked by
+/// hand: one a line, sorted by path.
+const PLACES: &str = include_str!("../../tests/fixtures/places.txt");
+
+/// Whether the file at `path` is a Rust file of this crate's own targets.
+fn is_own_rust(path: &str) -> bool {
+    let own = ["src/", "benches/", "tests/"]
+        .iter()
+        .any(|dir| path.starts_with(dir));
+    own && !path.starts_with("tests/fixtures/") && path.ends_with(".rs")
+}
+
+#[test]
+fn each_rust_file_of_this_crate_is_at_its_hand_checked_place() {
+    let tmp = TempDir::new().unwrap();
+    let cache = setup_store(tmp.path());
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let store = Store::reached_from(cache.root().to_path_buf(), repository);
+    let mut reads = Reads::of_tree(&store);
+    let anchored = std::iter::empty();
+    let (entries, walked) = read_tree(&store, store.code_root(), Scope::Tree, anchored, &mut reads);
+    // clone: the facts own the walked set, and the test iterates it after.
+    let facts = CodeFacts::new(entries, walked.clone());
+    let tree = CodeTree::of(&facts);
+    let found: BTreeSet<String> = walked
+        .iter()
+        .filter(|path| is_own_rust(path))
+        .map(|path| format!("{path}: {}", tree.spelled_place(path)))
+        .collect();
+    let expected: BTreeSet<String> = PLACES.lines().map(str::to_owned).collect();
+
+    let missing: Vec<&String> = expected.difference(&found).collect();
+    let extra: Vec<&String> = found.difference(&expected).collect();
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "places listed but not found: {missing:#?}\nplaces found but not listed: {extra:#?}"
+    );
 }

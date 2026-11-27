@@ -1,11 +1,14 @@
 //! Writing an index's entry, and measuring what each part of it costs.
 
 use crate::code::index::file::{Definition, FileIndex, IndexFault, Indexed, ModuleFile};
+use crate::code::index::manifest::{
+    Dependency, DependencySource, Manifest, Package, WorkspaceDependency,
+};
 use crate::code::index::scope::{Scope, ScopeId};
 use crate::code::index::span::{Span, SpanHash};
 use crate::code::index::symbol::Segment;
 
-use super::codes::{kind_code, role_code, visibility_code};
+use super::codes::{dependency_kind_code, kind_code, role_code, visibility_code};
 use super::room::{DEPTH_BYTES, block};
 
 /// The bytes of `indexed`.
@@ -65,6 +68,23 @@ impl Measure {
 
     pub(in crate::code::index) fn module_file(module: &ModuleFile) -> usize {
         Self::of(size_of::<ModuleFile>(), |out| out.module_file(module))
+    }
+
+    /// `manifest`, each of its dependencies and excluded paths a value of
+    /// its collection.
+    pub(in crate::code::index) fn manifest(manifest: &Manifest) -> usize {
+        let dependencies = manifest
+            .package
+            .as_ref()
+            .map_or(0, |package| package.dependencies.len());
+        let workspace = manifest.workspace.as_ref();
+        let inherited = workspace.map_or(0, |workspace| workspace.dependencies.len());
+        let excluded = workspace.map_or(0, |workspace| workspace.exclude.len());
+        let slots = dependencies
+            .saturating_mul(size_of::<Dependency>())
+            .saturating_add(inherited.saturating_mul(size_of::<WorkspaceDependency>()))
+            .saturating_add(excluded.saturating_mul(size_of::<String>()));
+        Self::of(slots, |out| out.manifest(manifest))
     }
 
     /// The cost of the part `write` writes, a value of `slot` bytes in its
@@ -172,6 +192,71 @@ impl<S: Sink> Writer<S> {
         for module in &index.rust.module_files {
             self.module_file(module);
         }
+        match &index.manifest {
+            None => self.byte(0),
+            Some(manifest) => {
+                self.byte(1);
+                self.manifest(manifest);
+            }
+        }
+    }
+
+    /// A manifest, in the block of its box: its package and its
+    /// workspace, each a byte 0 when it has none.
+    fn manifest(&mut self, manifest: &Manifest) {
+        self.0.own(size_of::<Manifest>());
+        match &manifest.package {
+            None => self.byte(0),
+            Some(package) => {
+                self.byte(1);
+                self.package(package);
+            }
+        }
+        match &manifest.workspace {
+            None => self.byte(0),
+            Some(workspace) => {
+                self.byte(1);
+                self.number(workspace.dependencies.len());
+                for dependency in &workspace.dependencies {
+                    self.text(&dependency.name);
+                    self.optional_text(dependency.path.as_deref());
+                }
+                self.number(workspace.exclude.len());
+                for path in &workspace.exclude {
+                    self.text(path);
+                }
+            }
+        }
+    }
+
+    fn package(&mut self, package: &Package) {
+        self.optional_text(package.name.as_deref());
+        self.optional_text(package.workspace.as_deref());
+        self.number(package.dependencies.len());
+        for dependency in &package.dependencies {
+            self.byte(dependency_kind_code(dependency.kind));
+            match &dependency.source {
+                DependencySource::Path(path) => {
+                    self.byte(0);
+                    self.text(path);
+                }
+                DependencySource::Workspace(name) => {
+                    self.byte(1);
+                    self.text(name);
+                }
+            }
+        }
+    }
+
+    /// An optional text: a byte 0 for none, else 1 and the text.
+    fn optional_text(&mut self, text: Option<&str>) {
+        match text {
+            None => self.byte(0),
+            Some(text) => {
+                self.byte(1);
+                self.text(text);
+            }
+        }
     }
 
     /// A scope, whose segments a read holds in a block of their own.
@@ -201,13 +286,7 @@ impl<S: Sink> Writer<S> {
     fn module_file(&mut self, module: &ModuleFile) {
         self.number(module.scope.at());
         self.byte(role_code(module.role));
-        match &module.path {
-            None => self.byte(0),
-            Some(path) => {
-                self.byte(1);
-                self.text(path);
-            }
-        }
+        self.optional_text(module.path.as_deref());
     }
 
     fn segment(&mut self, segment: &Segment) {

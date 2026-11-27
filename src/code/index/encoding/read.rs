@@ -4,6 +4,9 @@ use crate::code::index::file::{
     Definition, FileIndex, FileKind, IndexFault, Indexed, ModuleFile, RustFacts,
 };
 use crate::code::index::kinds::{DefinitionKind, Role, Visibility};
+use crate::code::index::manifest::{
+    Dependency, DependencyKind, DependencySource, Manifest, Package, Workspace, WorkspaceDependency,
+};
 use crate::code::index::scope::{MAX_NESTING, Scope, ScopeId};
 use crate::code::index::span::{Span, SpanHash};
 use crate::code::index::symbol::Segment;
@@ -11,7 +14,8 @@ use crate::code::index::symbol::Segment;
 use super::room::{DEPTH_BYTES, block, max_entry_bytes};
 
 /// The index `bytes` hold for a file of `kind` of `source_bytes` bytes;
-/// `None` when they are no encoding of one. A read charges each heap
+/// `None` when they are no encoding of one, or an index of a file past
+/// its kind's size, which has a fault alone. A read charges each heap
 /// block before it allocates it, as the allocator takes it ([`block`]),
 /// against what [`max_entry_bytes`] leaves past the entry's own bytes.
 /// An entry past that is no index. So every entry a write makes reads
@@ -20,7 +24,7 @@ use super::room::{DEPTH_BYTES, block, max_entry_bytes};
 pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Option<Indexed> {
     let mut reader = Reader::new(bytes, max_entry_bytes(kind, source_bytes))?;
     let indexed = match reader.byte()? {
-        0 => Ok(reader.index()?),
+        0 if source_bytes <= kind.max_bytes() => Ok(reader.index()?),
         1 => Err(IndexFault::NotUtf8 {
             at: reader.number()?,
         }),
@@ -155,22 +159,92 @@ impl<'b> Reader<'b> {
         for _ in 0..count {
             module_files.push(self.module_file(scopes.len())?);
         }
+        let manifest = match self.byte()? {
+            0 => None,
+            1 => {
+                self.own(size_of::<Manifest>())?;
+                Some(Box::new(self.manifest()?))
+            }
+            _ => return None,
+        };
         Some(FileIndex {
             scopes,
             definitions,
             rust: RustFacts { module_files },
+            manifest,
         })
     }
 
     fn module_file(&mut self, scopes: usize) -> Option<ModuleFile> {
         let scope = ScopeId::of(self.number()?).filter(|id| id.at() < scopes)?;
         let role = role_of(self.byte()?)?;
-        let path = match self.byte()? {
+        let path = self.optional_text()?;
+        Some(ModuleFile { scope, role, path })
+    }
+
+    /// A manifest, with a package or a workspace or both.
+    fn manifest(&mut self) -> Option<Manifest> {
+        let package = match self.byte()? {
             0 => None,
-            1 => Some(self.text()?),
+            1 => Some(self.package()?),
             _ => return None,
         };
-        Some(ModuleFile { scope, role, path })
+        let workspace = match self.byte()? {
+            0 => None,
+            1 => Some(self.workspace()?),
+            _ => return None,
+        };
+        (package.is_some() || workspace.is_some()).then_some(Manifest { package, workspace })
+    }
+
+    fn package(&mut self) -> Option<Package> {
+        let name = self.optional_text()?;
+        let workspace = self.optional_text()?;
+        let count = self.items::<Dependency>()?;
+        let mut dependencies = Vec::with_capacity(count);
+        for _ in 0..count {
+            let kind = *DependencyKind::ALL.get(usize::from(self.byte()?))?;
+            let source = match self.byte()? {
+                0 => DependencySource::Path(self.text()?),
+                1 => DependencySource::Workspace(self.text()?),
+                _ => return None,
+            };
+            dependencies.push(Dependency { kind, source });
+        }
+        Some(Package {
+            name,
+            workspace,
+            dependencies,
+        })
+    }
+
+    fn workspace(&mut self) -> Option<Workspace> {
+        let count = self.items::<WorkspaceDependency>()?;
+        let mut dependencies = Vec::with_capacity(count);
+        for _ in 0..count {
+            dependencies.push(WorkspaceDependency {
+                name: self.text()?,
+                path: self.optional_text()?,
+            });
+        }
+        let count = self.items::<String>()?;
+        let mut exclude = Vec::with_capacity(count);
+        for _ in 0..count {
+            exclude.push(self.text()?);
+        }
+        Some(Workspace {
+            dependencies,
+            exclude,
+        })
+    }
+
+    /// An optional text: a byte 0 for none, else 1 and the text.
+    fn optional_text(&mut self) -> Option<Option<String>> {
+        match self.byte()? {
+            0 => Some(None),
+            1 => self.text().map(Some),
+            _ => None,
+        }
     }
 
     /// The scopes, each parent below its child, of one segment at least,

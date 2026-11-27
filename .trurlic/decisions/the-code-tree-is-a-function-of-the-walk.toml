@@ -1,0 +1,15 @@
+component = "code"
+choice = "The code tree holds the walked files alone, read or not: a file an anchor brought is in no place, and a file or a manifest with no index keeps its place and its crate"
+reason = "The tree must not change with the anchors a call happens to resolve, so CodeTree::of reads the walked entries of CodeFacts and none an anchor brought, as the crates and test roles are read. Nor may it change with a file's state mid-edit. A walked file whose index cannot be built (too large, too deep, not UTF-8) is still a file of the tree. A Rust one is reached as any other, with no declaration of its own followed. A Cargo.toml with no index still makes its directory a crate, Crate::Unread, whose name and edges are unknown. So its files stay in it, and a path dependency on it still names it. The test roles take their crates from the same walked manifests, through the one constructor Crates::of, so the two agree on what a crate is."
+alternatives = [
+    "Build the tree in CodeFacts::new: rejected because check and status would pay for a tree they never read on every call",
+    "Leave out a manifest with no index: rejected because a syntax error mid-edit would move its crate's files into the crate above and turn every dependency on it into an unwalked path",
+]
+status = "proposed"
+origin = "a file's place and the crates in the code index"
+created = "2026-11-27T21:24:16.080164756Z"
+anchors = [
+    { file = "src/code/facts/crate_graph.rs", symbol = "Crate" },
+    { file = "src/code/facts/crates.rs", symbol = "Crates::of" },
+    { file = "src/code/facts/tree.rs", symbol = "CodeTree::of" },
+]

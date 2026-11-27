@@ -1,12 +1,19 @@
 //! The one-byte codes of an entry's closed sets: a definition's kind, its
-//! role and its visibility, each read back by its place in its set.
+//! role and its visibility, and a dependency's kind, each read back by its
+//! place in its set.
 
 use crate::code::index::kinds::{DefinitionKind, Role, Visibility};
+use crate::code::index::manifest::DependencyKind;
 
 /// A kind's code: its place in [`DefinitionKind::ALL`], by which a read
 /// takes it back.
 pub(super) fn kind_code(kind: DefinitionKind) -> u8 {
     place_in(&DefinitionKind::ALL, &kind)
+}
+
+/// A dependency kind's code: its place in [`DependencyKind::ALL`].
+pub(super) fn dependency_kind_code(kind: DependencyKind) -> u8 {
+    place_in(&DependencyKind::ALL, &kind)
 }
 
 /// A visibility's code: 0 for none, else one past its place in

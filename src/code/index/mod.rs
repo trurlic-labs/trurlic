@@ -1,13 +1,15 @@
 //! What a file's index is, whichever resolver builds it: the kind of a
-//! file, the definitions and scopes it holds, the symbol grammar its paths
-//! are spelled in, the budgets and bounds it is built within, the scope
-//! tree every resolver builds it through, and its entry in the cache.
-//! Nothing here reads a grammar or names a resolver: the resolvers stand
-//! on these values, never the other way.
+//! file, the definitions and scopes it holds, what a Cargo manifest
+//! states, the symbol grammar its paths are spelled in, the budgets and
+//! bounds it is built within, the scope tree every resolver builds it
+//! through, and its entry in the cache. Nothing here reads a grammar or
+//! names a resolver: the resolvers stand on these values, never the other
+//! way.
 
 mod encoding;
 mod file;
 mod kinds;
+mod manifest;
 mod scope;
 mod scope_tree;
 mod span;
@@ -22,6 +24,9 @@ pub(crate) use file::{
 pub(in crate::code) use file::{LEXICAL_MAX_BYTES, TREE_SITTER_MAX_BYTES};
 pub(in crate::code) use kinds::What;
 pub(crate) use kinds::{DefinitionKind, Role, Visibility};
+pub(in crate::code) use manifest::{
+    Dependency, DependencyKind, DependencySource, Manifest, Package, Workspace, WorkspaceDependency,
+};
 pub(crate) use scope::{MAX_NESTING, Scope, ScopeId, Scopes};
 pub(in crate::code) use scope_tree::ScopeTree;
 pub(in crate::code) use span::{CLOSE_MARK, Lines, NESTED_MARK, OPEN_MARK};

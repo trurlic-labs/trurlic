@@ -106,10 +106,11 @@ impl Resolution {
 /// other anchors there are.
 #[derive(Debug)]
 pub(crate) struct CodeFacts {
-    entries: BTreeMap<String, Entry>,
+    pub(super) entries: BTreeMap<String, Entry>,
     test_files: BTreeSet<String>,
-    /// The paths the walk took, which a count over the tree reads.
-    walked: BTreeSet<String>,
+    /// The paths the walk took, which a count over the tree and the code
+    /// tree read.
+    pub(super) walked: BTreeSet<String>,
 }
 
 /// The kind and index of `entry`, when it is a file with an index.
@@ -142,7 +143,9 @@ impl CodeFacts {
     /// them: a path absent from them is missing.
     pub(crate) fn new(entries: BTreeMap<String, Entry>, walked: BTreeSet<String>) -> Self {
         let (tree, outside) = split(&entries, &walked);
-        let crates = Crates::of(&tree, &outside);
+        let paths = || entries.keys().map(String::as_str);
+        let is_walked = |path: &&str| walked.contains(*path);
+        let crates = Crates::of(paths().filter(is_walked), paths().filter(|p| !is_walked(p)));
         let test_files: BTreeSet<String> = test_files(&tree, &outside, &crates)
             .into_iter()
             .map(str::to_owned)
@@ -165,17 +168,19 @@ impl CodeFacts {
             // clone: the facts own what was read; the paths also mask this tree's.
             .filter_map(|(path, entry)| Some((path.clone(), entry.clone()?)))
             .collect();
+        let still = |path: &&String| self.walked.contains(*path) && !read.contains_key(*path);
         let tree: Files<'_> = self
             .entries
             .iter()
-            .filter(|(path, _)| self.walked.contains(*path) && !read.contains_key(*path))
+            .filter(|(path, _)| still(path))
             .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
             .collect();
         let outside: Files<'_> = entries
             .iter()
             .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
             .collect();
-        let crates = Crates::of(&tree, &outside);
+        let walked = self.entries.keys().filter(still).map(String::as_str);
+        let crates = Crates::of(walked, entries.keys().map(String::as_str));
         let test_files = test_files(&tree, &outside, &crates)
             .into_iter()
             .filter(|path| entries.contains_key(*path))

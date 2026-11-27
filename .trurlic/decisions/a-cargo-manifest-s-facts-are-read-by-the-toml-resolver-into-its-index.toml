@@ -1,0 +1,18 @@
+component = "code"
+choice = "The TOML resolver reads what a document states as a Cargo manifest into its index, charged to its room; what depends on other manifests is resolved after every index, never cached"
+reason = "The crate graph needs values, a name and a path, that the key paths of a TOML index do not hold, and only code::lexical may name the toml crate, so the resolver that parses the document reads them. Every TOML document is read alike, since an index is a function of its kind and bytes and the name Cargo.toml is a path; the facts over a tree read the facts of Cargo.toml files alone. A document with neither [package] nor [workspace] holds None, which is not a manifest without dependencies, so an Option states it, at one byte in every other entry. The manifest is charged to the file's room through the scope tree as each definition is, and a read charges each block before it allocates, so thousands of dependencies stay within the bound of their file. What depends on other manifests, the workspace root and the crate an edge names, is resolved in the step over the tree, after every index."
+alternatives = [
+    "Read the manifests in sources and hand code their values: rejected because the shell would parse TOML a second time, outside the cached index",
+    "A file kind of its own for Cargo.toml: rejected because every table matched by kind and every cache key would grow for one file name",
+    "Facts in every index, empty by default: rejected because a virtual workspace and a TOML file that is no manifest would read alike, at four bytes an entry",
+]
+status = "proposed"
+origin = "a file's place and the crates in the code index"
+created = "2026-11-27T21:24:16.080164756Z"
+anchors = [
+    { file = "src/code/index/encoding/write.rs", symbol = "Measure::manifest" },
+    { file = "src/code/index/file.rs", symbol = "FileIndex" },
+    { file = "src/code/index/manifest.rs", symbol = "Manifest" },
+    { file = "src/code/index/scope_tree.rs", symbol = "ScopeTree::admit_manifest" },
+    { file = "src/code/lexical/manifest.rs", symbol = "manifest" },
+]

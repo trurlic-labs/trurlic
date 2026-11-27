@@ -1,0 +1,15 @@
+component = "code"
+choice = "Crates and their edges come from package.name and the path and workspace dependencies of the walked Rust manifests; no other language's manifest is read"
+reason = "A crate is the directory of a walked Cargo.toml, the same directories that decide a file's crate for its test role, so the tree and the roles agree on what a crate is. Only a path, written in the manifest or in its workspace root's, names a crate of the same tree, so the crate's edges are its path and workspace dependencies and nothing a registry holds. The manifests of other ecosystems, package.json and pyproject.toml among them, are not read: the tree of those languages is their directory tree, and each would need a resolver of its own."
+alternatives = [
+    "Run cargo metadata: rejected because the index runs no process and reads no registry, and a tree mid-edit may not build",
+    "Read package.json and pyproject.toml too: rejected by the owner, since the tree of those languages is their directory tree",
+]
+status = "accepted"
+origin = "a file's place and the crates in the code index"
+created = "2026-11-27T21:24:16.080164756Z"
+anchors = [
+    { file = "src/code/facts/crate_graph.rs", symbol = "Crate" },
+    { file = "src/code/facts/crate_graph.rs", symbol = "crates" },
+    { file = "src/code/lexical/manifest.rs", symbol = "manifest" },
+]

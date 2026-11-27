@@ -246,8 +246,9 @@ fn gained(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code::testing::facts;
     use crate::code::{Entry, FileFault, FileKind};
-    use crate::lint::anchors::testing::{anchor, decision, facts};
+    use crate::lint::anchors::testing::{anchor, decision};
     use crate::lint::anchors::{Asked, Elsewhere, Here, Worktree, findings, repair};
     use crate::store::{Decision, Status, StatusName};
 

@@ -1,5 +1,6 @@
 //! The lexical resolvers, each reading its kind without a grammar: TOML
-//! (`toml.rs`), JSON (`json.rs`), Makefiles (`make.rs`) and Markdown
+//! (`toml.rs`, and what a document states as a Cargo manifest in
+//! `manifest.rs`), JSON (`json.rs`), Makefiles (`make.rs`) and Markdown
 //! (`markdown.rs`). What each builds an index with ([`Lexical`]): the
 //! scopes of its names, each split at `::` as a symbol is, and its
 //! definitions, each hashed from its whitespace-normalized text, every
@@ -8,6 +9,7 @@
 
 pub(in crate::code) mod json;
 pub(in crate::code) mod make;
+mod manifest;
 pub(in crate::code) mod markdown;
 pub(in crate::code) mod toml;
 

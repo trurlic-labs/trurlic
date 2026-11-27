@@ -20,9 +20,11 @@ use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
 use super::Lexical;
+use super::manifest::manifest;
 use crate::code::index::{DefinitionKind, FileIndex, IndexFault, MAX_NESTING, ScopeId, ScopeTree};
 
-/// The index of `text`, a TOML file: its key paths.
+/// The index of `text`, a TOML file: its key paths, and what it states as
+/// a Cargo manifest (`manifest.rs`), charged to its room after them.
 pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let document = DeTable::parse(text).map_err(|error| IndexFault::Syntax {
         at: error.span().map_or(0, |span| span.start),
@@ -31,7 +33,14 @@ pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex,
         lexical: Lexical::of(text, scopes),
     };
     keys.table(None, document.get_ref(), 0)?;
-    Ok(keys.lexical.finish())
+    let manifest = manifest(document.get_ref());
+    if let Some(manifest) = &manifest {
+        keys.lexical.scopes.admit_manifest(manifest)?;
+    }
+    Ok(FileIndex {
+        manifest: manifest.map(Box::new),
+        ..keys.lexical.finish()
+    })
 }
 
 struct Keys<'t> {

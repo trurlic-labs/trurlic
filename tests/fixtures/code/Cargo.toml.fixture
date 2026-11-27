@@ -1,5 +1,8 @@
 [workspace]
-members = ["crates/ledger"]
+members = ["crates/ledger", "crates/shelf", "crates/tally"]
+
+[workspace.dependencies]
+ledger = { path = "crates/ledger" }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

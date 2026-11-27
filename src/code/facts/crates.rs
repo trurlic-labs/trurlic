@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::path::{ancestors, file_name, parent};
 use crate::code::index::{FileIndex, FileKind};
 
 /// The manifest that makes a directory a crate.
@@ -32,11 +33,9 @@ impl<'i> Layout<'i> {
         Self { crate_roots }
     }
 
-    /// The crate directory of `path`, or `path` itself outside every crate.
-    fn crate_of<'p>(&self, path: &'p str) -> &'p str {
-        ancestors(path)
-            .find(|dir| self.crate_roots.binary_search(dir).is_ok())
-            .unwrap_or(path)
+    /// The crate directory of `path`; `None` outside every crate.
+    fn crate_of<'p>(&self, path: &'p str) -> Option<&'p str> {
+        ancestors(path).find(|dir| self.crate_roots.binary_search(dir).is_ok())
     }
 }
 
@@ -52,49 +51,31 @@ pub(super) struct Crates<'i> {
 }
 
 impl<'i> Crates<'i> {
-    /// The crates of `files`, those the walk took, and of `outside`, the
-    /// files an anchor brought.
-    pub(super) fn of(files: &Files<'i>, outside: &Files<'i>) -> Self {
-        let manifests = |set: &Files<'i>| -> Vec<&'i str> {
-            set.keys()
-                .copied()
-                .filter(|path| file_name(path) == MANIFEST)
-                .collect()
-        };
-        let walked = manifests(files);
-        let brought = manifests(outside);
+    /// The crates of `walked`, the paths the walk took, and of `outside`,
+    /// those an anchor brought. A manifest makes its directory a crate
+    /// whether it has an index or not, so a syntax error mid-edit moves no
+    /// file out of its crate.
+    pub(super) fn of(
+        walked: impl IntoIterator<Item = &'i str>,
+        outside: impl IntoIterator<Item = &'i str>,
+    ) -> Self {
+        let is_manifest = |path: &&str| file_name(path) == MANIFEST;
+        let outside: BTreeSet<&str> = outside.into_iter().collect();
+        let walked: Vec<&str> = walked.into_iter().filter(is_manifest).collect();
+        let brought = outside.iter().copied().filter(is_manifest);
+        let all = Layout::of(walked.iter().copied().chain(brought));
         Self {
-            walked: Layout::of(walked.iter().copied()),
-            all: Layout::of(walked.iter().chain(&brought).copied()),
-            outside: outside.keys().copied().collect(),
+            walked: Layout::of(walked.into_iter()),
+            all,
+            outside,
         }
     }
 
-    /// The crate directory of `path`, or `path` itself outside every crate.
-    pub(super) fn crate_of<'p>(&self, path: &'p str) -> &'p str {
+    /// The crate directory of `path`; `None` outside every crate.
+    pub(super) fn crate_of<'p>(&self, path: &'p str) -> Option<&'p str> {
         match self.outside.contains(path) {
             true => self.all.crate_of(path),
             false => self.walked.crate_of(path),
         }
     }
-}
-
-pub(super) fn file_name(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
-}
-
-/// The directory of `path`; `""` for the code root.
-pub(super) fn parent(path: &str) -> &str {
-    path.rsplit_once('/').map_or("", |(dir, _)| dir)
-}
-
-/// The directories above `path`, nearest first, the code root (`""`)
-/// last.
-fn ancestors(path: &str) -> impl Iterator<Item = &str> {
-    let mut rest = Some(path);
-    std::iter::from_fn(move || {
-        let current = rest?;
-        rest = (!current.is_empty()).then(|| parent(current));
-        rest
-    })
 }

@@ -1,0 +1,8 @@
+[package]
+name = "shelf"
+
+[dependencies]
+ledger = { workspace = true }
+
+[dev-dependencies]
+tally = { path = "../tally" }

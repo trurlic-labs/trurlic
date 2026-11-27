@@ -1,0 +1,8 @@
+[package]
+name = "tally"
+
+[dependencies]
+ledger = { path = "../ledger" }
+
+[build-dependencies]
+stamp = { path = "../../../stamp" }
