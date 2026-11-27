@@ -37,9 +37,10 @@ test:
 # drive; without it, `cargo bench` has no bench target to run. Benches run
 # locally only. Criterion compares each run with the previous one under
 # target/criterion. Smoke run, each bench once:
-# `cargo bench --features bench -- --test`.
+# `cargo bench --features bench -- --test`. The git the benches start reads
+# no system or user configuration, so a run times this machine alone.
 bench:
-	cargo bench --locked --features bench
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null cargo bench --locked --features bench
 
 # ── Audit ─────────────────────────────────────────────────────────────────────
 # Requires `cargo install cargo-deny`.

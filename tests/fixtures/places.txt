@@ -170,6 +170,7 @@ src/store/corpus/mod.rs: . src > store::corpus
 src/store/corpus/project.rs: . src > store::corpus::project
 src/store/corpus/prose.rs: . src > store::corpus::prose
 src/store/corpus/seeded.rs: . src > store::corpus::seeded
+src/store/corpus/tree.rs: . src > store::corpus::tree
 src/store/corpus/words.rs: . src > store::corpus::words
 src/store/format/canonical.rs: . src > store::format::canonical
 src/store/format/layout.rs: . src > store::format::layout

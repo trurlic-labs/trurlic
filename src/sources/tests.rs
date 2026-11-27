@@ -9,6 +9,7 @@ use super::reads::{Reads, Scope, read_paths, read_tree};
 use super::repair::{Seen, still_holding};
 use super::source::MAX_SOURCE_FILE_BYTES;
 use crate::code::{CodeFacts, CodeTree, FileKind, Node, Resolution, SpanHash, Target};
+use crate::store::corpus::Corpus;
 use crate::store::testing::setup_store;
 use crate::store::{Anchor, Store, SymbolsKey};
 
@@ -1660,4 +1661,28 @@ fn each_rust_file_of_this_crate_is_at_its_hand_checked_place() {
         missing.is_empty() && extra.is_empty(),
         "places listed but not found: {missing:#?}\nplaces found but not listed: {extra:#?}"
     );
+}
+
+/// The source tree a corpus writes is one crate at the code root, whose
+/// `mod` declarations reach each of its Rust files, a suffixed
+/// component's through its `#[path]` included.
+#[test]
+fn every_rust_file_of_the_corpus_tree_is_a_module_of_its_one_crate() {
+    let tmp = TempDir::new().unwrap();
+    let store = Corpus::new(Corpus::SIZES[2]).write(tmp.path()).unwrap();
+    let mut reads = Reads::of_tree(&store);
+    let anchored = std::iter::empty();
+    let (entries, walked) = read_tree(&store, store.code_root(), Scope::Tree, anchored, &mut reads);
+    // clone: the facts own the walked set, and the test iterates it after.
+    let facts = CodeFacts::new(entries, walked.clone());
+    let tree = CodeTree::of(&facts);
+
+    let elsewhere: Vec<String> = walked
+        .iter()
+        .filter(|path| path.ends_with(".rs"))
+        .map(|path| format!("{path}: {}", tree.spelled_place(path)))
+        .filter(|place| !place.contains(": . src > "))
+        .collect();
+
+    assert_eq!(elsewhere, Vec::<String>::new());
 }

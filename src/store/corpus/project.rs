@@ -1,14 +1,13 @@
-//! The synthetic project a [`Corpus`] writes: its components, its
+//! The synthetic project a [`Corpus`] writes: its components and its
 //! decisions with their anchors and edges, drawn in one fixed order, and
-//! the source tree the anchors name.
+//! the source tree the anchors name (`tree.rs`).
 
 use std::collections::BTreeSet;
-use std::fs;
 use std::ops::RangeInclusive;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::{Error, Result};
+use crate::Result;
 
 use crate::store::format::Store;
 use crate::store::model::Timestamp;
@@ -18,7 +17,8 @@ use crate::store::model::{
 use crate::store::write::{CommitMessage, History, PendingWrite, Tool};
 
 use super::seeded::SplitMix64;
-use super::words::{COMPONENT_WORDS, MODULE_WORDS, SYMBOL_WORDS, TAGS};
+use super::tree::{FILES_PER_COMPONENT, module_stem, source_path, write_tree};
+use super::words::{COMPONENT_WORDS, SYMBOL_WORDS, TAGS};
 
 const DECISIONS_PER_COMPONENT: usize = 40;
 
@@ -26,8 +26,6 @@ const MIN_COMPONENTS: usize = 3;
 
 /// One decision in this many is project-wide.
 const PROJECT_WIDE_EVERY: usize = 16;
-
-const FILES_PER_COMPONENT: usize = 64;
 
 /// One decision in this many restates an earlier one: its reason opens
 /// with the first half of the earlier reason, a likely duplicate for
@@ -98,8 +96,9 @@ impl Corpus {
         }
     }
 
-    /// Create the store in `project_dir/.trurlic` and the source tree in
-    /// `project_dir/src`. Fails like `Store::create` when a store is there.
+    /// Create the store in `project_dir/.trurlic` and the source tree's
+    /// crate in `project_dir`. Fails like `Store::create` when a store is
+    /// there.
     pub fn write(&self, project_dir: &Path) -> Result<Store> {
         self.write_as(project_dir, Placement::Tracked)
     }
@@ -109,7 +108,7 @@ impl Corpus {
     pub fn write_as(&self, project_dir: &Path, placement: Placement) -> Result<Store> {
         let plan = Plan::new(*self);
         let store = Store::create(project_dir, "corpus", placement)?;
-        plan.write_sources(project_dir)?;
+        write_tree(project_dir, &plan.components, self.seed)?;
         let writes = plan.writes(&store)?;
         let message = CommitMessage::of(Tool::Init);
         let history = History::of(placement, &message);
@@ -118,7 +117,7 @@ impl Corpus {
     }
 }
 
-/// Every node and source file of a corpus, drawn in a fixed order.
+/// Every node of a corpus, drawn in a fixed order.
 struct Plan {
     components: Vec<String>,
     decisions: Vec<(String, Decision)>,
@@ -180,27 +179,6 @@ impl Plan {
         }
         Ok(writes)
     }
-
-    /// One `pub fn` per [`SYMBOL_WORDS`] entry in every file, anchored or not.
-    fn write_sources(&self, project_dir: &Path) -> Result<()> {
-        for component in &self.components {
-            let dir = project_dir.join("src").join(component);
-            fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
-            for file in 0..FILES_PER_COMPONENT {
-                let stem = module_stem(file);
-                let mut source = format!("//! The {stem} module of {component}.\n");
-                for (factor, prefix) in (3..).zip(SYMBOL_WORDS) {
-                    source.push_str(&format!(
-                        "\npub fn {prefix}_{stem}(input: usize) -> usize {{\n    \
-                         input.wrapping_mul({factor}) ^ {file}\n}}\n"
-                    ));
-                }
-                let path = dir.join(format!("{stem}.rs"));
-                fs::write(&path, source).map_err(Error::io(&path))?;
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Assigns anchors: a component's decisions name its anchored files in
@@ -241,8 +219,8 @@ impl Anchors {
         (0..rng.below(most + 1))
             .filter_map(|_| {
                 let (component, file) = self.next_file(owner, components.len());
+                let path = source_path(&components[component], file);
                 let stem = module_stem(file);
-                let path = format!("src/{}/{stem}.rs", components[component]);
                 let symbol =
                     (!rng.one_in(20)).then(|| format!("{}_{stem}", rng.pick(&SYMBOL_WORDS)));
                 // A path of names this module draws is always an anchor.
@@ -344,20 +322,15 @@ fn component_names(decisions: usize) -> Vec<String> {
         .collect()
 }
 
-/// File stems: [`MODULE_WORDS`] with a round suffix.
-fn module_stem(file: usize) -> String {
-    let word = MODULE_WORDS[file % MODULE_WORDS.len()];
-    format!("{word}_{}", file / MODULE_WORDS.len())
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
 
     use super::*;
     use crate::store::format::canonical;
     use crate::store::limits::MAX_CHOICE_BYTES;
-    use crate::store::{ProjectState, STATE_DIR};
+    use crate::store::{ProjectState, STATE_DIR, STORE_DIR};
     use tempfile::TempDir;
 
     /// Every file under `dir` but `.state/`, by path relative to `dir`.
@@ -388,9 +361,13 @@ mod tests {
         (tmp, state)
     }
 
-    /// Source files under `src/`, and those an anchor names.
+    /// The files anchors draw from, those of a component's directory but
+    /// its `mod.rs`, and those an anchor names.
     fn source_files(dir: &Path, state: &ProjectState) -> (usize, BTreeSet<String>) {
-        let total = files(&dir.join("src")).len();
+        let total = files(&dir.join("src"))
+            .iter()
+            .filter(|(path, _)| path.components().count() == 2 && !path.ends_with("mod.rs"))
+            .count();
         let named = state
             .decisions
             .values()
@@ -412,6 +389,34 @@ mod tests {
 
         assert_eq!(files(first.path()), files(second.path()));
         assert_ne!(files(first.path()), files(reseeded.path()));
+    }
+
+    /// The graph of each of [`Corpus::SIZES`] is byte for byte what it
+    /// was when this pin was taken, so the benches over it compare across
+    /// commits; a change to the source tree draws from its own stream and
+    /// moves no pin. A pin moves only with a change to the graph itself.
+    #[test]
+    fn the_graph_of_each_size_is_the_pinned_bytes() {
+        let pinned = [
+            "e57847a78098a31b7638e7a48539b1ffce554f9d5b96646ea3328987407beaea",
+            "c8be17b8b04736c5f520ff44c4933b2cd420ea6e523509f021057037c3e63cba",
+            "fbec5fc9c8ba67cd7958101b14fbf312a4fdfdaf5339d2ef0fae0135051ebebb",
+        ];
+        for (size, pin) in Corpus::SIZES.into_iter().zip(pinned) {
+            let tmp = TempDir::new().unwrap();
+            Corpus::new(size).write(tmp.path()).unwrap();
+
+            let mut hasher = blake3::Hasher::new();
+            for (path, bytes) in files(&tmp.path().join(STORE_DIR)) {
+                let path = path.to_str().unwrap();
+                hasher
+                    .update(&path.len().to_le_bytes())
+                    .update(path.as_bytes());
+                hasher.update(&bytes.len().to_le_bytes()).update(&bytes);
+            }
+
+            assert_eq!(hasher.finalize().to_hex().as_str(), pin, "{size}");
+        }
     }
 
     #[test]
