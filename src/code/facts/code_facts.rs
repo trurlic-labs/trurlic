@@ -119,6 +119,7 @@ fn indexed(entry: &Entry) -> Option<(FileKind, &FileIndex)> {
         Entry::File {
             kind,
             index: Ok(index),
+            ..
         } => Some((*kind, index)),
         Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
     }
@@ -244,7 +245,10 @@ impl CodeFacts {
     /// has the name as its whole path: a module-level item's name is the
     /// fullest spelling it has.
     fn lone_name(&self, anchor: &Anchor) -> Option<(FileKind, String)> {
-        let Some(Entry::File { kind, index: Ok(_) }) = self.entries.get(anchor.file()) else {
+        let Some(Entry::File {
+            kind, index: Ok(_), ..
+        }) = self.entries.get(anchor.file())
+        else {
             return None;
         };
         let symbol = Symbol::parse(anchor.symbol()?, syntax_of(*kind)).ok()?;
@@ -440,6 +444,7 @@ impl CodeFacts {
             Entry::File {
                 kind,
                 index: Ok(index),
+                ..
             } => match Symbol::parse(symbol, syntax_of(*kind)) {
                 Ok(symbol) => Self::find(index, &symbol),
                 Err(fault) => Resolution::Malformed(fault),

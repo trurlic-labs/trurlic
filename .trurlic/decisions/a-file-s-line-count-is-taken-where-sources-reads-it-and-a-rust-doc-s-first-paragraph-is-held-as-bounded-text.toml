@@ -1,0 +1,18 @@
+component = "code"
+choice = "A file's line count is taken where sources reads it, and the first paragraph of a Rust file's //! and of a definition's /// is held as text bounded in bytes"
+reason = "A map of the code (crate, module, file, definitions) shows each file with its lines and each file and definition with its doc, and reads both from what a call already gathers, never from the file again. A file's lines are a fact of its bytes, which sources holds on every read, so the count is taken there and handed to code in the file's Entry: a file the index refuses still has it once read, and a file never read has none. A doc is held as text in the index, so a warm call shows it from the cache with no parse. Only the first paragraph is held, the summary rustdoc shows in an item list, and it is bounded in bytes, so no doc grows an entry past its file's room. Rust's docs alone are read; another language's docs are a change of their own."
+alternatives = [
+    "Count lines and read docs from the file when a command asks: rejected because a warm call would then read and parse every file it shows, which the cache exists to spare",
+    "Hold a doc's whole text: rejected because its later paragraphs are prose a map does not show, and every entry would grow with them",
+    "Hold a doc as a span of its file: rejected because a reader would then read the file to show it",
+]
+status = "accepted"
+origin = "lines and leading docs in the code index"
+created = "2026-11-27T21:21:19.817755843Z"
+anchors = [
+    { file = "src/code/facts/entry.rs", symbol = "Entry" },
+    { file = "src/code/index/file.rs", symbol = "Doc" },
+    { file = "src/code/index/span.rs", symbol = "line_count" },
+    { file = "src/code/parse/rust/docs.rs", symbol = "first_paragraph" },
+    { file = "src/sources/source.rs", symbol = "index_bytes" },
+]

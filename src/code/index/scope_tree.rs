@@ -1,12 +1,12 @@
 //! The one way into an index: every resolver enters its scopes and
-//! admits its definitions, module files and manifest through the scope
-//! tree, which charges each what its entry costs against the room of the
-//! file ([`encoding::room_of`]), so no rule of any resolver can make an
-//! index outgrow its file, and refuses a path past [`MAX_NESTING`]
-//! segments.
+//! admits its definitions, with their docs, its module files, its file's
+//! doc and its manifest through the scope tree, which charges each what
+//! its entry costs against the room of the file ([`encoding::room_of`]),
+//! so no rule of any resolver can make an index outgrow its file, and
+//! refuses a path past [`MAX_NESTING`] segments.
 
 use super::encoding::{self, Measure};
-use super::file::{Definition, FileKind, IndexFault, ModuleFile};
+use super::file::{Definition, Doc, FileKind, IndexFault, ModuleFile};
 use super::manifest::Manifest;
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::Span;
@@ -77,6 +77,10 @@ impl ScopeTree {
         manifest: &Manifest,
     ) -> Result<(), IndexFault> {
         self.charge(Measure::manifest(manifest))
+    }
+
+    pub(in crate::code) fn admit_file_doc(&mut self, doc: &Doc) -> Result<(), IndexFault> {
+        self.charge(Measure::file_doc(doc))
     }
 
     fn charge(&mut self, bytes: usize) -> Result<(), IndexFault> {

@@ -275,7 +275,11 @@ mod tests {
             (
                 name.to_owned(),
                 path.to_owned(),
-                Entry::File { kind, index },
+                Entry::File {
+                    kind,
+                    lines: Some(crate::code::line_count(text.as_bytes())),
+                    index,
+                },
             )
         }));
         prior

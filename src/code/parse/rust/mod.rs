@@ -13,7 +13,9 @@
 //! field has no name and defines nothing; neither does a `use` without a
 //! visibility, a glob, an item named `_`, or a `pub use` of a path the file
 //! already defines (`pub(crate) use name;` after `macro_rules! name`). An
-//! item's span takes in the attributes and doc comments before it.
+//! item's span takes in the attributes and doc comments before it. The
+//! file and every definition but a re-export hold the first paragraph of
+//! their doc (`docs.rs`).
 //!
 //! A `macro_rules!` macro is a definition of kind macro. A macro
 //! invocation defines nothing: what it produces is its macro's, which the
@@ -26,6 +28,7 @@
 //! from the tokens its hash holds, so a comment or a trailing comma
 //! rustfmt adds moves no path.
 
+mod docs;
 mod items;
 mod lexicon;
 mod marks;

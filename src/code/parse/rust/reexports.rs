@@ -99,7 +99,7 @@ pub(super) fn define(
         .collect();
     for (leaf, name) in new {
         let scope = build.scopes.enter(leaf.container, vec![name])?;
-        build.define(scope, leaf.range, leaf.what)?;
+        build.define(scope, leaf.range, leaf.what, None)?;
     }
     Ok(())
 }

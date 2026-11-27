@@ -67,6 +67,7 @@ impl<'t> Lexical<'t> {
             hash,
             role: Role::Code,
             visibility: None,
+            doc: None,
         };
         self.scopes.admit_definition(&definition)?;
         self.definitions.push(definition);

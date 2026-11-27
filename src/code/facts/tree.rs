@@ -80,12 +80,14 @@ impl<'i> CodeTree<'i> {
                 Entry::File {
                     kind,
                     index: Ok(index),
+                    ..
                 } => {
                     files.insert(path, (*kind, index));
                 }
                 Entry::File {
                     kind,
                     index: Err(_),
+                    ..
                 } => {
                     files.insert(path, (*kind, &NO_INDEX));
                     unread.insert(path);
@@ -510,6 +512,7 @@ mod tests {
     fn a_file_an_anchor_brought_is_in_no_place() {
         let brought = crate::code::Entry::File {
             kind: FileKind::Rust,
+            lines: Some(0),
             index: crate::code::testing::index(FileKind::Rust, b"")
                 .map_err(crate::code::FileFault::Index),
         };

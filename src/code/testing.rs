@@ -31,6 +31,7 @@ pub(crate) fn facts(files: &[(&str, &str)], other: &[(&str, Entry)]) -> CodeFact
             let kind = FileKind::of(path).unwrap();
             let file = Entry::File {
                 kind,
+                lines: Some(super::index::line_count(text.as_bytes())),
                 index: index(kind, text.as_bytes()).map_err(FileFault::Index),
             };
             ((*path).to_owned(), file)

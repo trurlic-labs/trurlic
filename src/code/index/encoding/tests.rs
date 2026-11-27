@@ -1,6 +1,6 @@
 use super::room::COUNTS_BYTES;
 use super::{Measure, decode, encode, max_entry_bytes};
-use crate::code::index::{FileIndex, FileKind, IndexFault};
+use crate::code::index::{FileIndex, FileKind, IndexFault, MAX_DOC_BYTES};
 
 /// Every file of the fixture corpus and of `src/code`, with its kind
 /// and bytes.
@@ -152,6 +152,9 @@ e = '1'
 fn every_entry_a_write_makes_reads_back() {
     let variants = format!("enum E {{ {} }}", "A, ".repeat(5_000));
     let names = format!("{}z = 0\n", "a,".repeat(50_000));
+    let long = "a ".repeat(1_000);
+    let docs =
+        format!("//! {long}\n/** {long} */\nfn f() {{}}\n/// b\nstruct S {{ /// c\n d: u8 }}");
     let cases = [
         ("variants".to_owned(), FileKind::Rust, variants.into_bytes()),
         ("names".to_owned(), FileKind::Python, names.into_bytes()),
@@ -165,6 +168,7 @@ fn every_entry_a_write_makes_reads_back() {
             FileKind::Toml,
             b"[workspace]\n".to_vec(),
         ),
+        ("docs".to_owned(), FileKind::Rust, docs.into_bytes()),
     ];
     for (name, kind, bytes) in &cases {
         let indexed = crate::code::testing::index(*kind, bytes);
@@ -207,10 +211,11 @@ fn every_entry_a_write_makes_reads_back() {
 
 #[test]
 fn bytes_that_break_the_form_are_no_index() {
-    let indexed = crate::code::testing::index(FileKind::Rust, b"mod a { fn b() {} }").unwrap();
+    let text = b"//! F.\nmod a { /// B.\nfn b() {} }";
+    let indexed = crate::code::testing::index(FileKind::Rust, text).unwrap();
     let bytes = encode(&Ok(indexed));
 
-    let source = 19;
+    let source = text.len();
     let decoded = |bytes: &[u8]| decode(bytes, FileKind::Rust, source);
     for cut in 0..bytes.len() {
         assert_eq!(decoded(&bytes[..cut]), None, "cut at {cut}");
@@ -234,8 +239,37 @@ fn bytes_that_break_the_form_are_no_index() {
     assert_eq!(decoded(&[9]), None);
 }
 
+/// An entry of no scope, definition, module file or manifest, and a file
+/// doc of `code` and `text`.
+fn file_doc_entry(code: u8, text: &[u8]) -> Vec<u8> {
+    let length = u16::try_from(text.len()).unwrap();
+    let mut entry = vec![0, 0, 0, 0, code];
+    entry.extend([0x80 | (length & 0x7f) as u8, (length >> 7) as u8]);
+    entry.extend(text);
+    entry.push(0);
+    entry
+}
+
+#[test]
+fn a_doc_reads_back_within_its_bound_and_none_past_it_empty_or_of_no_code() {
+    let source = 4096;
+    let decoded = |bytes: &[u8]| decode(bytes, FileKind::Rust, source);
+    let at_bound = vec![b'a'; MAX_DOC_BYTES];
+    let past = vec![b'a'; MAX_DOC_BYTES + 1];
+
+    let Some(Ok(index)) = decoded(&file_doc_entry(2, &at_bound)) else {
+        panic!("a cut doc at the bound is an index");
+    };
+    let doc = index.doc.unwrap();
+    assert_eq!((doc.text().len(), doc.is_cut()), (MAX_DOC_BYTES, true));
+    assert_eq!(decoded(&file_doc_entry(1, &past)), None);
+    assert_eq!(decoded(&file_doc_entry(1, b"")), None);
+    assert_eq!(decoded(&file_doc_entry(3, b"a")), None);
+    assert_eq!(decoded(&[0, 0, 0, 0, 3, 0]), None);
+}
+
 /// An entry of `scopes` scopes of one segment of a one-byte name each,
-/// and nothing else: five bytes apiece, and no manifest.
+/// and nothing else: five bytes apiece, no doc and no manifest.
 fn forged(scopes: usize) -> Vec<u8> {
     let mut forged = vec![0];
     let mut count = scopes;
@@ -247,7 +281,7 @@ fn forged(scopes: usize) -> Vec<u8> {
     for _ in 0..scopes {
         forged.extend([0, 1, 0, 1, b'a']);
     }
-    forged.extend([0, 0, 0]);
+    forged.extend([0, 0, 0, 0]);
     forged
 }
 
@@ -264,7 +298,7 @@ fn malloc(n: usize) -> usize {
 /// 48-byte segment and one of its one-byte name.
 fn resident(scopes: usize) -> usize {
     let count = (usize::BITS - scopes.leading_zeros()).div_ceil(7).max(1) as usize;
-    let entry = 1 + count + 5 * scopes + 3;
+    let entry = 1 + count + 5 * scopes + 4;
     entry + malloc(scopes * 32) + malloc(scopes * 8) + scopes * (64 + 32)
 }
 
@@ -323,6 +357,7 @@ fn measured(index: &FileIndex) -> usize {
             .map(Measure::module_file)
             .sum::<usize>()
         + index.manifest.as_deref().map_or(0, Measure::manifest)
+        + index.doc.as_ref().map_or(0, Measure::file_doc)
 }
 
 #[test]
@@ -357,7 +392,21 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
         "a".repeat(100_000),
         "self,".repeat(20_000)
     );
+    // Near the cap: an item with the shortest doc in seven bytes, a
+    // paragraph of a megabyte, a doc past the bound every 600 bytes, and a
+    // file doc of a megabyte.
+    let documented = format!("enum E{{{}}}", "///a\nA,".repeat(149_000));
+    let paragraph = format!(
+        "{}fn f() {{}}",
+        format!("/// {}\n", "a".repeat(95)).repeat(10_000)
+    );
+    let past_bound = format!("/// {}\nfn f() {{}}\n", "a".repeat(580)).repeat(1_700);
+    let file_doc = "//! a\n".repeat(170_000);
     for (kind, text) in [
+        (FileKind::Rust, documented.as_str()),
+        (FileKind::Rust, paragraph.as_str()),
+        (FileKind::Rust, past_bound.as_str()),
+        (FileKind::Rust, file_doc.as_str()),
         (FileKind::Rust, variants.as_str()),
         (FileKind::Rust, fields.as_str()),
         (FileKind::Rust, nested.as_str()),

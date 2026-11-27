@@ -21,7 +21,7 @@ pub(crate) use encoding::{decode, encode, max_entry_bytes};
 pub(crate) use file::{
     Definition, FileIndex, FileKind, IndexFault, Indexed, MAX_SOURCE_BYTES, ModuleFile,
 };
-pub(in crate::code) use file::{LEXICAL_MAX_BYTES, TREE_SITTER_MAX_BYTES};
+pub(in crate::code) use file::{Doc, LEXICAL_MAX_BYTES, MAX_DOC_BYTES, TREE_SITTER_MAX_BYTES};
 pub(in crate::code) use kinds::What;
 pub(crate) use kinds::{DefinitionKind, Role, Visibility};
 pub(in crate::code) use manifest::{
@@ -30,7 +30,7 @@ pub(in crate::code) use manifest::{
 pub(crate) use scope::{MAX_NESTING, Scope, ScopeId, Scopes};
 pub(in crate::code) use scope_tree::ScopeTree;
 pub(in crate::code) use span::{CLOSE_MARK, Lines, NESTED_MARK, OPEN_MARK};
-pub(crate) use span::{HASH_SCHEME, Span, SpanHash};
+pub(crate) use span::{HASH_SCHEME, Span, SpanHash, line_count};
 pub(in crate::code) use symbol::name_segments;
 pub(super) use symbol::{Segment, Symbol, SymbolFault, Syntax};
 pub(in crate::code) use work::{

@@ -32,7 +32,7 @@ pub(crate) use facts::{CodeTree, Node, Target};
 pub(crate) use index::SpanHash;
 pub(crate) use index::{
     DefinitionKind, FileKind, HASH_SCHEME, Indexed, MAX_SOURCE_BYTES, decode as decode_index,
-    encode as encode_index, max_entry_bytes,
+    encode as encode_index, line_count, max_entry_bytes,
 };
 pub(crate) use parse::{
     BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, grammar_identity_of,

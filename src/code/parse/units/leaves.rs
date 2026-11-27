@@ -395,7 +395,8 @@ mod tests {
     #[test]
     fn a_hash_of_tokens_ignores_comments_and_layout() {
         let one = "fn f(a: u8) -> u8 { a + 1 }";
-        let two = "/// Doc.\nfn f(\n    a: u8 // why\n) -> u8 {\n    a /* x */ + 1\n}";
+        let two =
+            "/// Doc.\n/** Block doc. */\nfn f(\n    a: u8 // why\n) -> u8 {\n    a /* x */ + 1\n}";
 
         assert_eq!(hash(one), hash(two));
         assert_ne!(hash(one), hash("fn f(a: u8) -> u8 { a + 2 }"));

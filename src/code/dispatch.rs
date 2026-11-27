@@ -6,9 +6,10 @@
 
 use super::index::{
     Definition, Dependency, ENTRY_OVERHEAD_BYTES, FileIndex, FileKind, IndexFault,
-    LEXICAL_MAX_BYTES, LEXICAL_WORK_PER_BYTE, MAX_NESTING, MIN_PARSE_OPERATIONS, MIN_WORK,
-    Manifest, ModuleFile, PARSE_OPERATIONS_PER_BYTE, SCAN_WORK_PER_BYTE, SERVED_BYTES_PER_BYTE,
-    Scope, ScopeTree, Segment, TREE_SITTER_MAX_BYTES, WorkspaceDependency, room_per_byte,
+    LEXICAL_MAX_BYTES, LEXICAL_WORK_PER_BYTE, MAX_DOC_BYTES, MAX_NESTING, MIN_PARSE_OPERATIONS,
+    MIN_WORK, Manifest, ModuleFile, PARSE_OPERATIONS_PER_BYTE, SCAN_WORK_PER_BYTE,
+    SERVED_BYTES_PER_BYTE, Scope, ScopeTree, Segment, TREE_SITTER_MAX_BYTES, WorkspaceDependency,
+    room_per_byte,
 };
 use super::lexical::{json, make, markdown, toml};
 use super::parse::general::{self, Source};
@@ -21,13 +22,13 @@ use super::parse::{
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 22;
+pub(crate) const INDEX_FORMAT: u32 = 23;
 
 /// Every bound an index is built within, by name and value: in a cache
 /// key, so an index built under other bounds is never read as one of
 /// these, whatever the fixture corpus shows of them. The sizes of the
 /// values an index holds bound it through the room of its file.
-pub(crate) const BOUNDS: [(&str, usize); 35] = [
+pub(crate) const BOUNDS: [(&str, usize); 36] = [
     ("tree_sitter_max_bytes", TREE_SITTER_MAX_BYTES),
     ("lexical_max_bytes", LEXICAL_MAX_BYTES),
     ("served_bytes_per_byte", SERVED_BYTES_PER_BYTE),
@@ -39,6 +40,7 @@ pub(crate) const BOUNDS: [(&str, usize); 35] = [
     ("chunk_bytes", CHUNK_BYTES),
     ("operations_per_progress", OPERATIONS_PER_PROGRESS),
     ("max_nesting", MAX_NESTING),
+    ("max_doc_bytes", MAX_DOC_BYTES),
     ("scope_bytes", size_of::<Scope>()),
     ("segment_bytes", size_of::<Segment>()),
     ("definition_bytes", size_of::<Definition>()),
@@ -144,7 +146,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 22] = [
+    const FINGERPRINTS: [(u32, &str); 23] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -232,6 +234,10 @@ mod tests {
         (
             22,
             "ec54ed666cb9d7730535b183f8bc05b134a3a39aaaf79188750ee89f1f74e1d2",
+        ),
+        (
+            23,
+            "d94a5cec24da0b901cc0978961f71e360d73817d2c329c2d713ad812bab0faf9",
         ),
     ];
 

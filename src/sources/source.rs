@@ -1,5 +1,6 @@
-//! One source file's bytes and its index: the bounded read of the file, and
-//! its index from the cache when an entry holds its key, else built by the
+//! One source file's bytes, their lines and their index: the bounded read
+//! of the file, its lines counted from its bytes on every read, and its
+//! index from the cache when an entry holds its key, else built by the
 //! indexer's worker. What a read gave is [`Sourced`], which the call's
 //! [`Reads`](super::reads::Reads) takes.
 
@@ -20,14 +21,29 @@ pub(super) const MAX_SOURCE_FILE_BYTES: u64 = code::MAX_SOURCE_BYTES as u64;
 
 /// What reading a file gave.
 pub(super) enum Sourced {
+    /// No bytes of it.
     Fault(ReadFault),
-    /// Its index, and the cache entries it used: the index's and, for a C
-    /// or C++ file, its lexical pass's.
+    /// Its bytes' [`line_count`](code::line_count), and the fault that
+    /// left them with no index.
+    Unindexed { lines: usize, fault: ReadFault },
+    /// Its bytes' line count, its index, and the cache entries it used:
+    /// the index's and, for a C or C++ file, its lexical pass's.
     Indexed {
+        lines: usize,
         indexed: Box<Indexed>,
         index: Used,
         lexed: Option<Used>,
     },
+}
+
+impl Sourced {
+    /// What a read of `bytes` gave that `fault` left with no index.
+    pub(super) fn unindexed(bytes: &[u8], fault: ReadFault) -> Self {
+        Self::Unindexed {
+            lines: code::line_count(bytes),
+            fault,
+        }
+    }
 }
 
 /// A cache entry a read used: its key, and its bytes to write when the
@@ -51,8 +67,10 @@ pub(super) fn read_and_index(
     }
 }
 
-/// The index of `bytes`, the file at `path` of `kind`: the cache's, else
-/// built.
+/// The lines and the index of `bytes`, the file at `path` of `kind`: its
+/// lines counted, its index the cache's, else built. The count is taken
+/// on a warm read too, from the bytes its key is hashed from, so no entry
+/// holds it.
 pub(super) fn index_bytes(
     cached: &Cached<'_>,
     worker: &Worker<'_>,
@@ -79,10 +97,11 @@ pub(super) fn index_bytes(
                 let miss = Some(cache::encode(key, &indexed));
                 (indexed, miss)
             }
-            Err(fault) => return Sourced::Fault(fault),
+            Err(fault) => return Sourced::unindexed(bytes, fault),
         },
     };
     Sourced::Indexed {
+        lines: code::line_count(bytes),
         indexed: Box::new(indexed),
         index: Used { key, miss },
         lexed,

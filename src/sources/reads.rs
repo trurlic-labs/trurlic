@@ -153,9 +153,11 @@ impl Reads {
     /// The entry of a file of `kind` that `read` gave, the cache entries
     /// it used noted; `None` for a file gone.
     pub(super) fn take(&mut self, kind: FileKind, read: Option<Sourced>) -> Option<Entry> {
-        let index = match read? {
-            Sourced::Fault(fault) => Err(FileFault::Read(fault)),
+        let (lines, index) = match read? {
+            Sourced::Fault(fault) => (None, Err(FileFault::Read(fault))),
+            Sourced::Unindexed { lines, fault } => (Some(lines), Err(FileFault::Read(fault))),
             Sourced::Indexed {
+                lines,
                 indexed,
                 index,
                 lexed,
@@ -163,10 +165,10 @@ impl Reads {
                 for used in std::iter::once(index).chain(lexed) {
                     self.note(used.key, used.miss);
                 }
-                (*indexed).map_err(FileFault::Index)
+                (Some(lines), (*indexed).map_err(FileFault::Index))
             }
         };
-        Some(Entry::File { kind, index })
+        Some(Entry::File { kind, lines, index })
     }
 
     fn note(&mut self, key: SymbolsKey, miss: Option<Vec<u8>>) {

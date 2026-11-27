@@ -1,0 +1,22 @@
+component = "code"
+choice = "A Rust doc is its outer docs then the inner docs that start its body, from ///, /** */, //!, /*! */ and doc attributes of a string; its first paragraph's lines are trimmed and joined by one space"
+reason = "The map shows what rustdoc shows as an item's summary, so the doc is read in rustdoc's order: the attributes and outer doc comments before an item, a plain comment among them passed over, then the inner docs at the start of its body (an inline mod, a fn, a trait, an impl); a file's doc is the inner docs at its top, after a shebang line if it has one. A doc attribute's string, raw or not, is read as written, escapes kept, as a #[path] string is. A doc attribute of any other value (include_str!) ends the read, its text being in another file; one under cfg_attr holds only under a configuration and is not read. A block doc's lines lose a leading star when every line after its first that is not blank has one. The paragraph ends at the first blank line, and its lines are trimmed and joined by one space, since a summary is one line; no Markdown is read, and a control character within a line is kept as written, for a reader to escape as its output needs. Every definition but a re-export holds its doc, fields, variants and methods among them, since the map lists them all; a re-export's doc is its target's, held where the target is defined. Docs are comments, so no span hash moves with them, and the read is linear in the docs' bytes."
+alternatives = [
+    "Read /// alone: rejected because an item documented by a block doc or a doc attribute would show none",
+    "Unescape a doc attribute's string: rejected because escapes are rare in a doc, and #[path] strings already keep them as written, one rule for both",
+    "Keep the paragraph's line breaks: rejected because the summary a map shows is one line, as rustdoc renders it",
+    "Give each name of a pub use the use's doc: rejected because a use of many names would hold one doc many times, and a re-export's doc is its target's",
+    "Hold docs of items alone, not of fields, variants or methods: rejected because the map lists every definition, and a field's doc is where its meaning is stated",
+]
+status = "proposed"
+origin = "lines and leading docs in the code index"
+created = "2026-11-27T21:21:19.817755843Z"
+anchors = [
+    { file = "src/code/parse/rust/docs.rs", symbol = "first_paragraph" },
+    { file = "src/code/parse/rust/walk.rs", symbol = "Walk::define_named" },
+    { file = "src/code/parse/rust/walk.rs", symbol = "push_children" },
+    { file = "tests/fixtures/code/crates/ledger/src/docs.rs" },
+]
+depends_on = [
+    "a-file-s-line-count-is-taken-where-sources-reads-it-and-a-rust-doc-s-first-paragraph-is-held-as-bounded-text",
+]

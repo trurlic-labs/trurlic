@@ -1,6 +1,6 @@
 //! Writing an index's entry, and measuring what each part of it costs.
 
-use crate::code::index::file::{Definition, FileIndex, IndexFault, Indexed, ModuleFile};
+use crate::code::index::file::{Definition, Doc, FileIndex, IndexFault, Indexed, ModuleFile};
 use crate::code::index::manifest::{
     Dependency, DependencySource, Manifest, Package, WorkspaceDependency,
 };
@@ -8,7 +8,7 @@ use crate::code::index::scope::{Scope, ScopeId};
 use crate::code::index::span::{Span, SpanHash};
 use crate::code::index::symbol::Segment;
 
-use super::codes::{dependency_kind_code, kind_code, role_code, visibility_code};
+use super::codes::{dependency_kind_code, doc_code, kind_code, role_code, visibility_code};
 use super::room::{DEPTH_BYTES, block};
 
 /// The bytes of `indexed`.
@@ -85,6 +85,11 @@ impl Measure {
             .saturating_add(inherited.saturating_mul(size_of::<WorkspaceDependency>()))
             .saturating_add(excluded.saturating_mul(size_of::<String>()));
         Self::of(slots, |out| out.manifest(manifest))
+    }
+
+    /// A file's doc, whose code the entry's overhead holds.
+    pub(in crate::code::index) fn file_doc(doc: &Doc) -> usize {
+        Self::of(0, |out| out.doc(Some(doc)))
     }
 
     /// The cost of the part `write` writes, a value of `slot` bytes in its
@@ -177,6 +182,8 @@ impl<S: Sink> Writer<S> {
         self.0.put(hash.as_bytes());
     }
 
+    /// An index, in the order a read takes it: its scopes, definitions and
+    /// module files, its file's doc, then its manifest.
     fn index(&mut self, index: &FileIndex) {
         self.number(index.scopes.len());
         for scope in &index.scopes {
@@ -192,6 +199,8 @@ impl<S: Sink> Writer<S> {
         for module in &index.rust.module_files {
             self.module_file(module);
         }
+        self.byte(doc_code(index.doc.as_ref()));
+        self.doc(index.doc.as_ref());
         match &index.manifest {
             None => self.byte(0),
             Some(manifest) => {
@@ -270,16 +279,31 @@ impl<S: Sink> Writer<S> {
     }
 
     /// A definition, its span written as one byte when it is `previous`.
+    /// Its marks hold its role in bit 0, its visibility in bits 1 to 3 and
+    /// its doc's code in bits 4 and 5.
     fn definition(&mut self, definition: &Definition, previous: Option<Span>) {
         self.number(definition.scope.at());
         self.byte(kind_code(definition.kind));
-        self.byte(role_code(definition.role) | visibility_code(definition.visibility) << 1);
+        let doc = definition.doc.as_ref();
+        self.byte(
+            role_code(definition.role)
+                | visibility_code(definition.visibility) << 1
+                | doc_code(doc) << 4,
+        );
         match previous == Some(definition.span) {
             true => self.byte(1),
             false => {
                 self.byte(0);
                 self.span(definition.span, definition.hash);
             }
+        }
+        self.doc(doc);
+    }
+
+    /// The text of `doc`, if there is one; its code is written apart.
+    fn doc(&mut self, doc: Option<&Doc>) {
+        if let Some(doc) = doc {
+            self.text(doc.text());
         }
     }
 

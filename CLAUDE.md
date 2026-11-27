@@ -74,6 +74,7 @@ purity     → code (tests only)           what a module's non-test code may nam
 | Span-hash units and hashing | `code/parse/units/` |
 | What a Cargo manifest states, in a TOML index / read by | `code/index/manifest.rs` / `code/lexical/manifest.rs` |
 | The `mod` walk / a file's place / the crates and their edges / the code tree | `code/facts/walk.rs` / `places.rs` / `crate_graph.rs` / `tree.rs` |
+| A Rust doc's first paragraph / a file's line count, and where a read takes it | `code/parse/rust/docs.rs` / `code/index/span.rs` (`line_count`), `sources/source.rs` |
 | Query contract / general resolver | `code/parse/query/` / `code/parse/general/` |
 | Failpoint sites | `failpoint.rs` |
 

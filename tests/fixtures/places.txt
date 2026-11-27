@@ -57,6 +57,7 @@ src/code/parse/parser.rs: . src > code::parse::parser
 src/code/parse/query/compile.rs: . src > code::parse::query::compile
 src/code/parse/query/mod.rs: . src > code::parse::query
 src/code/parse/query/rules.rs: . src > code::parse::query::rules
+src/code/parse/rust/docs.rs: . src > code::parse::rust::docs
 src/code/parse/rust/items.rs: . src > code::parse::rust::items
 src/code/parse/rust/lexicon.rs: . src > code::parse::rust::lexicon
 src/code/parse/rust/marks.rs: . src > code::parse::rust::marks

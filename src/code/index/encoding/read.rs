@@ -1,7 +1,7 @@
 //! Reading an index's entry back, taking nothing on trust.
 
 use crate::code::index::file::{
-    Definition, FileIndex, FileKind, IndexFault, Indexed, ModuleFile, RustFacts,
+    Definition, Doc, FileIndex, FileKind, IndexFault, Indexed, ModuleFile, RustFacts,
 };
 use crate::code::index::kinds::{DefinitionKind, Role, Visibility};
 use crate::code::index::manifest::{
@@ -159,6 +159,8 @@ impl<'b> Reader<'b> {
         for _ in 0..count {
             module_files.push(self.module_file(scopes.len())?);
         }
+        let code = self.byte()?;
+        let doc = self.doc(code)?;
         let manifest = match self.byte()? {
             0 => None,
             1 => {
@@ -170,9 +172,23 @@ impl<'b> Reader<'b> {
         Some(FileIndex {
             scopes,
             definitions,
+            doc,
             rust: RustFacts { module_files },
             manifest,
         })
+    }
+
+    /// The doc whose code, as [`doc_code`](super::codes::doc_code) writes
+    /// it, is `code`: `Some(None)` for none, `None` for no code or a text
+    /// no [`Doc`] holds.
+    fn doc(&mut self, code: u8) -> Option<Option<Doc>> {
+        let cut = match code {
+            0 => return Some(None),
+            1 => false,
+            2 => true,
+            _ => return None,
+        };
+        Doc::new(self.text()?, cut).map(Some)
     }
 
     fn module_file(&mut self, scopes: usize) -> Option<ModuleFile> {
@@ -282,7 +298,7 @@ impl<'b> Reader<'b> {
             let kind = self.kind()?;
             let marks = self.byte()?;
             let role = role_of(marks & 1)?;
-            let visibility = match marks >> 1 {
+            let visibility = match (marks >> 1) & 0b111 {
                 0 => None,
                 code => Some(*Visibility::ALL.get(usize::from(code) - 1)?),
             };
@@ -291,6 +307,7 @@ impl<'b> Reader<'b> {
                 1 => definitions.last().map(|last| (last.span, last.hash))?,
                 _ => return None,
             };
+            let doc = self.doc(marks >> 4)?;
             definitions.push(Definition {
                 scope,
                 kind,
@@ -298,6 +315,7 @@ impl<'b> Reader<'b> {
                 hash,
                 role,
                 visibility,
+                doc,
             });
         }
         Some(definitions)

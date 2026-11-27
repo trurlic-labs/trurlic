@@ -1,6 +1,6 @@
 //! What the shell found at each path of a tree, handed to the index's
 //! facts as data: a directory, a file of a kind no resolver reads, or a
-//! file with its index or why it has none.
+//! file with its lines and its index or why it has none.
 
 use std::fmt;
 use std::io::ErrorKind;
@@ -44,9 +44,13 @@ pub(crate) enum Entry {
     /// A file of a kind with no resolver: it exists, and nothing more is
     /// known.
     Unindexed,
-    /// A file of a kind with a resolver: its index, or why it has none.
+    /// A file of a kind with a resolver: its lines, and its index or why
+    /// it has none.
     File {
         kind: FileKind,
+        /// Its [`line_count`](crate::code::index::line_count); `None` when
+        /// the shell read none of its bytes.
+        lines: Option<usize>,
         index: Result<FileIndex, FileFault>,
     },
 }

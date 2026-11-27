@@ -93,6 +93,7 @@ mod tests {
             hash: SpanHash::of_text(hash),
             role: Role::Code,
             visibility: None,
+            doc: None,
         }
     }
 

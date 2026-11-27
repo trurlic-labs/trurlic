@@ -102,9 +102,9 @@ pub(in crate::code) const fn room_per_byte(kind: FileKind) -> usize {
 }
 
 /// The bytes of an index's outcome tag, its three counts, each a count
-/// of at most `u32::MAX` items, and the byte that says whether a manifest
-/// follows.
-pub(super) const COUNTS_BYTES: usize = 1 + 3 * 5 + 1;
+/// of at most `u32::MAX` items, its file doc's code, and the byte that
+/// says whether a manifest follows.
+pub(super) const COUNTS_BYTES: usize = 1 + 3 * 5 + 1 + 1;
 
 /// The collections a decode allocates whole: the scopes, their depths,
 /// the definitions, the module files, and a manifest's dependencies,

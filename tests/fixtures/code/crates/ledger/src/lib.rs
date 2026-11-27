@@ -102,6 +102,7 @@ impl Book {
 }
 
 pub mod books;
+mod docs;
 mod marks;
 mod rules;
 #[cfg(test)]

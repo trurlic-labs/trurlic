@@ -1,9 +1,10 @@
 //! The walk of tree-sitter-rust's tree that defines each item it holds,
 //! from an explicit stack, each node visited once with the container it
-//! stands in and the role its attributes give it ([`index`]).
+//! stands in, the role its attributes give it and its doc ([`index`]).
 
 use tree_sitter::Node;
 
+use super::docs;
 use super::items::{Item, Within};
 use super::lexicon::LEXICON;
 use super::marks::{self, Marks};
@@ -17,8 +18,8 @@ use crate::code::parse::parser::{self, text_of};
 use crate::code::parse::tree_index::TreeIndex;
 use crate::code::parse::units::Leaves;
 
-/// The index of `text`, a Rust file. Its hashes leave out the tokens of
-/// no meaning (`silent.rs`).
+/// The index of `text`, a Rust file, with its doc. Its hashes leave out
+/// the tokens of no meaning (`silent.rs`).
 pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let tree = parser::parse(text, &tree_sitter_rust::LANGUAGE.into())?;
     let silent = silent::silent_tokens(tree.root_node());
@@ -34,6 +35,9 @@ pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex,
     };
     walk.run(tree.root_node())?;
     reexports::define(walk.reexports, &mut walk.build, text)?;
+    if let Some(doc) = docs::first_paragraph(&[], Some(tree.root_node()), text) {
+        walk.build.document_file(doc)?;
+    }
     Ok(walk.build.finish())
 }
 
@@ -68,17 +72,19 @@ struct Context {
 }
 
 /// A node to visit: its context, where it starts with the attributes and
-/// doc comments before it, and what those attributes say. Both are known
-/// from the parent's walk of its children: asking a node for its previous
-/// sibling costs a walk of its parent's children. Its role takes in its
-/// own attributes.
-#[derive(Clone, Copy)]
+/// doc comments before it, what those attributes say, and those nodes.
+/// All are known from the parent's walk of its children: asking a node
+/// for its previous sibling costs a walk of its parent's children. Its
+/// role takes in its own attributes.
 struct Visit<'n> {
     node: Node<'n>,
     context: Context,
     start: usize,
     /// What its attributes say: its role is in its context.
     marks: Marks<'n>,
+    /// The attributes and outer doc comments before it, in order: the
+    /// outer part of its doc.
+    attached: Vec<Node<'n>>,
 }
 
 impl Walk<'_> {
@@ -96,10 +102,12 @@ impl Walk<'_> {
                 macro_export: false,
                 path: None,
             },
+            attached: Vec::new(),
         }];
         while let Some(visit) = stack.pop() {
-            if let Some(inner) = self.visit(visit)? {
-                push_children(&mut stack, visit.node, inner, self.text);
+            let node = visit.node;
+            if let Some(inner) = self.visit(&visit)? {
+                push_children(&mut stack, node, inner, self.text);
             }
         }
         Ok(())
@@ -107,8 +115,8 @@ impl Walk<'_> {
 
     /// Record what `visit`'s node defines; the context its children are
     /// walked in, or `None` when they hold no item.
-    fn visit(&mut self, visit: Visit<'_>) -> Result<Option<Context>, IndexFault> {
-        let Visit { node, context, .. } = visit;
+    fn visit(&mut self, visit: &Visit<'_>) -> Result<Option<Context>, IndexFault> {
+        let Visit { node, context, .. } = *visit;
         if let Some(item) = Item::of_node(node.kind()) {
             let inner = self.define_named(visit, item)?;
             return Ok(item.holds_items().then_some(inner));
@@ -137,11 +145,12 @@ impl Walk<'_> {
     /// Define the item `node` under its `name`, and return the context of
     /// what it holds. An inner attribute of its body (`mod m {
     /// #![cfg(test)] }`) is the item's.
-    fn define_named(&mut self, visit: Visit<'_>, item: Item) -> Result<Context, IndexFault> {
+    fn define_named(&mut self, visit: &Visit<'_>, item: Item) -> Result<Context, IndexFault> {
         let Visit {
             node, mut context, ..
-        } = visit;
-        if let Some(body) = node.child_by_field_name("body") {
+        } = *visit;
+        let body = node.child_by_field_name("body");
+        if let Some(body) = body {
             context.role = marks::inner_role(body, context.role, self.text);
         }
         let own = marks::visibility_of(node, self.text);
@@ -160,18 +169,12 @@ impl Walk<'_> {
                 role: context.role,
                 visibility: context.within.visibility(own),
             };
+            let doc = docs::first_paragraph(&visit.attached, body, self.text);
             self.build
-                .define(scope, visit.start..node.end_byte(), what)?;
+                .define(scope, visit.start..node.end_byte(), what, doc)?;
         }
-        if item == Item::Module && node.child_by_field_name("body").is_none() {
-            self.build.add_module_file(ModuleFile {
-                scope,
-                role: context.role,
-                path: visit
-                    .marks
-                    .path
-                    .map(|literal| string_value(literal, self.text)),
-            })?;
+        if item == Item::Module && body.is_none() {
+            self.add_module_file(scope, context.role, visit)?;
         }
         Ok(Context {
             scope: Some(scope),
@@ -180,9 +183,29 @@ impl Walk<'_> {
         })
     }
 
+    /// Add `scope`, of a `mod name;` that `visit` declares with `role`,
+    /// as a module whose items are in a file of its own: the file a
+    /// `#[path = ".."]` names, if one does.
+    fn add_module_file(
+        &mut self,
+        scope: ScopeId,
+        role: Role,
+        visit: &Visit<'_>,
+    ) -> Result<(), IndexFault> {
+        let path = visit
+            .marks
+            .path
+            .map(|literal| marks::string_value(literal, self.text));
+        self.build.add_module_file(ModuleFile {
+            scope,
+            role,
+            path: path.map(str::to_owned),
+        })
+    }
+
     /// Define a `macro_rules!` macro. A macro is private to its module and
     /// those below unless an attribute exports it.
-    fn define_macro(&mut self, visit: Visit<'_>) -> Result<(), IndexFault> {
+    fn define_macro(&mut self, visit: &Visit<'_>) -> Result<(), IndexFault> {
         let Some(name) = visit.node.child_by_field_name("name") else {
             return Ok(());
         };
@@ -196,19 +219,21 @@ impl Walk<'_> {
                 false => Visibility::Private,
             }),
         };
+        let doc = docs::first_paragraph(&visit.attached, None, self.text);
         self.build
-            .define(scope, visit.start..visit.node.end_byte(), what)
+            .define(scope, visit.start..visit.node.end_byte(), what, doc)
     }
 
     /// An `impl`'s context: the type's segment, then the trait's for a
     /// trait impl, which is itself a definition.
-    fn enter_impl(&mut self, visit: Visit<'_>) -> Result<Context, IndexFault> {
+    fn enter_impl(&mut self, visit: &Visit<'_>) -> Result<Context, IndexFault> {
         let Visit {
             node,
             context,
             start,
+            ref attached,
             ..
-        } = visit;
+        } = *visit;
         let Some(self_type) = node.child_by_field_name("type") else {
             return Ok(context);
         };
@@ -226,7 +251,10 @@ impl Walk<'_> {
                     role: context.role,
                     visibility: None,
                 };
-                self.build.define(scope, start..node.end_byte(), what)?;
+                let body = node.child_by_field_name("body");
+                let doc = docs::first_paragraph(attached, body, self.text);
+                self.build
+                    .define(scope, start..node.end_byte(), what, doc)?;
                 Context {
                     scope: Some(scope),
                     within: Within::TraitImpl,
@@ -242,15 +270,39 @@ impl Walk<'_> {
     }
 }
 
+/// The attributes and outer doc comments right before a child: where the
+/// first starts, what the attributes say, and the nodes of both.
+struct Leading<'n> {
+    start: usize,
+    marks: Marks<'n>,
+    attached: Vec<Node<'n>>,
+}
+
+impl Leading<'_> {
+    /// The run that starts at byte `start` of a node whose inner
+    /// attributes give its children `role`.
+    const fn starting_at(start: usize, role: Role) -> Self {
+        Self {
+            start,
+            marks: Marks {
+                role,
+                macro_export: false,
+                path: None,
+            },
+            attached: Vec::new(),
+        }
+    }
+}
+
 /// Push the named children of `node` to visit in `context`, each with
 /// where it starts: at the first of the attributes and outer doc comments
-/// right before it; and each with the role its attributes give it, and
-/// an inner `#![cfg(test)]` gives every child.
+/// right before it; each with the role its attributes give it, and an
+/// inner `#![cfg(test)]` gives every child; and each with those nodes.
 fn push_children<'n>(stack: &mut Vec<Visit<'n>>, node: Node<'n>, context: Context, text: &str) {
     let inner_role = marks::inner_role(node, context.role, text);
     let mut cursor = node.walk();
     let children: Vec<Node<'n>> = node.named_children(&mut cursor).collect();
-    let mut leading: Option<(usize, Marks<'n>)> = None;
+    let mut leading: Option<Leading<'n>> = None;
     for child in children {
         let attribute = child.kind() == "attribute_item";
         let comment = matches!(child.kind(), "line_comment" | "block_comment");
@@ -260,47 +312,43 @@ fn push_children<'n>(stack: &mut Vec<Visit<'n>>, node: Node<'n>, context: Contex
         if comment && !doc && leading.is_some() {
             continue;
         }
-        let attached = attribute || doc;
-        let unmarked = Marks {
-            role: inner_role,
-            macro_export: false,
-            path: None,
-        };
-        let (start, mut marks) = leading.unwrap_or((child.start_byte(), unmarked));
+        let mut run = leading
+            .take()
+            .unwrap_or_else(|| Leading::starting_at(child.start_byte(), inner_role));
         if attribute {
-            marks = marks.and(marks::attribute_item_marks(child, text));
+            run.marks = run.marks.and(marks::attribute_item_marks(child, text));
         }
-        leading = attached.then_some((start, marks));
-        // A variant's discriminant is an expression: an item in it is
-        // visible as its own modifier says, not as the enum.
-        let within = match node.kind() == "enum_variant"
-            && !child.kind().ends_with("field_declaration_list")
-        {
-            true => Within::Items,
-            false => context.within,
+        let (start, marks) = (run.start, run.marks);
+        let attached = match attribute || doc {
+            true => {
+                run.attached.push(child);
+                leading = Some(run);
+                Vec::new()
+            }
+            false => run.attached,
         };
         stack.push(Visit {
             node: child,
             context: Context {
                 role: marks.role,
-                within,
+                within: child_within(node, child, context.within),
                 ..context
             },
             start,
             marks,
+            attached,
         });
     }
 }
 
-/// The text a string literal holds, between its quotes; escapes are kept
-/// as written, which a path rarely holds.
-fn string_value(literal: Node<'_>, text: &str) -> String {
-    let spelled = text_of(literal, text);
-    let inside = spelled
-        .find('"')
-        .zip(spelled.rfind('"'))
-        .and_then(|(first, last)| spelled.get(first + 1..last));
-    inside.unwrap_or_default().to_owned()
+/// The container `child` of `node` stands in, `within` that of `node`'s
+/// children: a variant's discriminant is an expression, so an item in it
+/// is visible as its own modifier says, not as the enum.
+fn child_within(node: Node<'_>, child: Node<'_>, within: Within) -> Within {
+    match node.kind() == "enum_variant" && !child.kind().ends_with("field_declaration_list") {
+        true => Within::Items,
+        false => within,
+    }
 }
 
 /// The segment an `impl` gives its type: the last name of its path, its

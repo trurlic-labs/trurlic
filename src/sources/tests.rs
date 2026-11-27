@@ -8,7 +8,7 @@ use super::findings::{checked_findings, tree_findings};
 use super::reads::{Reads, Scope, read_paths, read_tree};
 use super::repair::{Seen, still_holding};
 use super::source::MAX_SOURCE_FILE_BYTES;
-use crate::code::{CodeFacts, CodeTree, FileKind, Node, Resolution, SpanHash, Target};
+use crate::code::{CodeFacts, CodeTree, Entry, FileKind, Node, Resolution, SpanHash, Target};
 use crate::store::corpus::Corpus;
 use crate::store::testing::setup_store;
 use crate::store::{Anchor, Store, SymbolsKey};
@@ -615,6 +615,54 @@ fn a_warm_index_reads_the_cache_and_answers_as_a_cold_one() {
     assert_eq!(entries(&store), written);
 }
 
+/// The line count and the index fault of each file of the tree at
+/// `store`'s code root and of `anchored`, the cache filled as a call
+/// fills it.
+fn lines(store: &Store, anchored: &[&str]) -> BTreeMap<String, (Option<usize>, Option<String>)> {
+    let mut reads = Reads::of_tree(store);
+    let anchored = anchored.iter().copied();
+    let (found, _) = read_tree(store, store.code_root(), Scope::Tree, anchored, &mut reads);
+    reads.write(store);
+    found
+        .into_iter()
+        .filter_map(|(path, entry)| match entry {
+            Entry::File { lines, index, .. } => {
+                Some((path, (lines, index.err().map(|fault| fault.to_string()))))
+            }
+            Entry::Directory | Entry::Unindexed => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_file_read_has_its_line_count_cold_and_warm_refused_or_not_and_one_unread_has_none() {
+    let (tmp, store) = tree_of(&[("final.rs", "fn a() {}\nfn b() {}\n"), ("empty.rs", "")]);
+    fs::write(tmp.path().join("bytes.rs"), b"fn a() {}\n\xff\n").unwrap();
+    let big = File::create(tmp.path().join("big.json")).unwrap();
+    big.set_len(MAX_SOURCE_FILE_BYTES + 1).unwrap();
+    let read = |count| (Some(count), None);
+    let expected = BTreeMap::from([
+        (
+            "big.json".to_owned(),
+            (
+                None,
+                Some("is 4194305 bytes, over the 4194304 a source file may hold".to_owned()),
+            ),
+        ),
+        (
+            "bytes.rs".to_owned(),
+            (Some(2), Some("is not UTF-8 from byte 10".to_owned())),
+        ),
+        ("empty.rs".to_owned(), read(0)),
+        ("final.rs".to_owned(), read(2)),
+    ]);
+
+    let cold = lines(&store, &["big.json"]);
+    assert_eq!(cold, expected);
+    assert!(!entries(&store).is_empty());
+    assert_eq!(lines(&store, &["big.json"]), cold);
+}
+
 #[test]
 fn an_entry_that_is_not_what_its_key_says_is_a_miss_and_is_replaced() {
     let (_tmp, store) = fixture_tree();
@@ -967,6 +1015,16 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/books/mod.rs Imported Struct Code Public",
     "crates/ledger/src/books/mod.rs call_only Function Code Public",
     "crates/ledger/src/checks.rs balanced Function Test Public",
+    "crates/ledger/src/docs.rs Journal Struct Code Public",
+    "crates/ledger/src/docs.rs Journal::entries Field Code Public",
+    "crates/ledger/src/docs.rs Journal::count Field Code Private",
+    "crates/ledger/src/docs.rs Balance Enum Code Public",
+    "crates/ledger/src/docs.rs Balance::Even Variant Code Public",
+    "crates/ledger/src/docs.rs Balance::Owed Variant Code Public",
+    "crates/ledger/src/docs.rs audit Function Code Public",
+    "crates/ledger/src/docs.rs undocumented Function Code Public",
+    "crates/ledger/src/docs.rs verbose Function Code Public",
+    "crates/ledger/src/docs.rs terms Module Code Public",
     "crates/ledger/src/lib.rs PAGE_SIZE Constant Code Public",
     "crates/ledger/src/lib.rs OPENED Static Code Private",
     "crates/ledger/src/lib.rs page_count Function Code Crate",
@@ -1007,6 +1065,7 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/lib.rs Book::<Audit>::audit Method Code -",
     "crates/ledger/src/lib.rs Book::close Method Code Public",
     "crates/ledger/src/lib.rs books Module Code Public",
+    "crates/ledger/src/lib.rs docs Module Code Private",
     "crates/ledger/src/lib.rs marks Module Code Private",
     "crates/ledger/src/lib.rs rules Module Code Private",
     "crates/ledger/src/lib.rs checks Module Test Private",
