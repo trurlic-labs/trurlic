@@ -1,4 +1,5 @@
 benches/corpus.rs: . benches > 
+src/bench.rs: . src > bench
 src/budget.rs: . src > budget
 src/cli.rs: . src > cli
 src/code/dispatch.rs: . src > code::dispatch
@@ -7,6 +8,7 @@ src/code/facts/crate_graph.rs: . src > code::facts::crate_graph
 src/code/facts/crates.rs: . src > code::facts::crates
 src/code/facts/definitions.rs: . src > code::facts::definitions
 src/code/facts/entry.rs: . src > code::facts::entry
+src/code/facts/imports.rs: . src > code::facts::imports
 src/code/facts/mod.rs: . src > code::facts
 src/code/facts/path.rs: . src > code::facts::path
 src/code/facts/places.rs: . src > code::facts::places
@@ -20,6 +22,7 @@ src/code/index/encoding/room.rs: . src > code::index::encoding::room
 src/code/index/encoding/tests.rs: . src > code::index::encoding::tests
 src/code/index/encoding/write.rs: . src > code::index::encoding::write
 src/code/index/file.rs: . src > code::index::file
+src/code/index/import.rs: . src > code::index::import
 src/code/index/kinds.rs: . src > code::index::kinds
 src/code/index/manifest.rs: . src > code::index::manifest
 src/code/index/mod.rs: . src > code::index
@@ -58,10 +61,14 @@ src/code/parse/query/compile.rs: . src > code::parse::query::compile
 src/code/parse/query/mod.rs: . src > code::parse::query
 src/code/parse/query/rules.rs: . src > code::parse::query::rules
 src/code/parse/rust/docs.rs: . src > code::parse::rust::docs
+src/code/parse/rust/imports.rs: . src > code::parse::rust::imports
 src/code/parse/rust/items.rs: . src > code::parse::rust::items
 src/code/parse/rust/lexicon.rs: . src > code::parse::rust::lexicon
 src/code/parse/rust/marks.rs: . src > code::parse::rust::marks
 src/code/parse/rust/mod.rs: . src > code::parse::rust
+src/code/parse/rust/paths.rs: . src > code::parse::rust::paths
+src/code/parse/rust/reading.rs: . src > code::parse::rust::reading
+src/code/parse/rust/rebinding.rs: . src > code::parse::rust::rebinding
 src/code/parse/rust/reexports.rs: . src > code::parse::rust::reexports
 src/code/parse/rust/silent.rs: . src > code::parse::rust::silent
 src/code/parse/rust/tests.rs: . src > code::parse::rust::tests
@@ -132,7 +139,6 @@ src/mcp/reply.rs: . src > mcp::reply
 src/mcp/server.rs: . src > mcp::server
 src/purity/layer.rs: . src > purity::layer
 src/purity/mod.rs: . src > purity
-src/purity/path.rs: . src > purity::path
 src/purity/pure.rs: . src > purity::pure
 src/purity/read.rs: . src > purity::read
 src/purity/test_code.rs: . src > purity::test_code
@@ -149,6 +155,7 @@ src/sources/repair/moves.rs: . src > sources::repair::moves
 src/sources/repair/recheck.rs: . src > sources::repair::recheck
 src/sources/repair/renames.rs: . src > sources::repair::renames
 src/sources/source.rs: . src > sources::source
+src/sources/testing.rs: . src > sources::testing
 src/sources/tests.rs: . src > sources::tests
 src/sources/walk.rs: . src > sources::walk
 src/sources/worktrees.rs: . src > sources::worktrees

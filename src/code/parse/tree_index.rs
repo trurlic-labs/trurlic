@@ -10,8 +10,8 @@ use std::ops::Range;
 
 use super::units::Leaves;
 use crate::code::index::{
-    Definition, Doc, FileIndex, IndexFault, Lines, ModuleFile, ScopeId, ScopeTree, Span, SpanHash,
-    What,
+    Definition, Doc, FileIndex, Import, IndexFault, Lines, ModuleFile, PathStep, ScopeId,
+    ScopeTree, Span, SpanHash, What,
 };
 
 /// The hash a definition holds until the end of the walk.
@@ -110,6 +110,28 @@ impl<'t> TreeIndex<'t> {
     pub(super) fn add_module_file(&mut self, module: ModuleFile) -> Result<(), IndexFault> {
         self.scopes.admit_module_file(&module)?;
         self.index.rust.module_files.push(module);
+        Ok(())
+    }
+
+    /// Add `step`, charged to the file's room; its place among the steps.
+    pub(super) fn add_step(&mut self, step: PathStep) -> Result<usize, IndexFault> {
+        self.scopes.admit_step(&step)?;
+        let at = self.index.rust.steps.len();
+        self.index.rust.steps.push(step);
+        Ok(at)
+    }
+
+    /// Add `module`, a module that holds a macro invocation as an item,
+    /// charged to the file's room.
+    pub(super) fn add_macro_module(&mut self, module: Option<ScopeId>) -> Result<(), IndexFault> {
+        self.scopes.admit_macro_module(module)?;
+        self.index.rust.macro_modules.push(module);
+        Ok(())
+    }
+
+    pub(super) fn add_import(&mut self, import: Import) -> Result<(), IndexFault> {
+        self.scopes.admit_import(&import)?;
+        self.index.rust.imports.push(import);
         Ok(())
     }
 

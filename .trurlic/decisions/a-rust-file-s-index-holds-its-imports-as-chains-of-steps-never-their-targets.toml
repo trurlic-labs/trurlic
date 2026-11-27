@@ -1,0 +1,17 @@
+component = "code"
+choice = "A Rust file's index holds each in-crate path it names as a chain of steps with its role and kind; what a path resolves to is found over the tree and never cached"
+reason = "A cached index must stay a function of its file's kind and bytes, and a path's target depends on the other files of the tree. So the index holds the path as spelled, and the facts over the tree resolve it on each call. A path is a chain of steps, one a segment, each after the step before it, the first after the inline module it stands in. The entries of a use list share the steps of their prefix, so a list nested ten thousand deep costs steps linear in its file. Each import names its last step, its role from the walk of the file's items, and its kind: a path in code, a use leaf or a re-export, with the name a use binds. It holds too each of the file's modules that holds a macro invocation as an item, which may define any name there. Every step and import is charged to the file's room by the scope tree, and again by a decode, which refuses a step after one not below it. A step and an import cost less a byte than the densest definition, so the room a byte is unchanged."
+alternatives = [
+    "A full path per import: rejected because a use list nested d deep then costs d squared, and a legal file would be refused past its room",
+    "Cache each file's resolved targets: rejected because a target moves when another file changes, so the entry would no longer be a function of its bytes",
+    "Hold only the use declarations: rejected because a qualified path in code, crate::x::f(), is as much a dependency as a use",
+]
+status = "proposed"
+origin = "imports between Rust files in the code index"
+created = "2026-11-27T23:27:09.715654771Z"
+anchors = [
+    { file = "src/code/index/encoding/read.rs", symbol = "Reader::rust_facts" },
+    { file = "src/code/index/import.rs", symbol = "Import" },
+    { file = "src/code/index/import.rs", symbol = "PathStep" },
+    { file = "src/code/parse/rust/imports.rs", symbol = "add" },
+]

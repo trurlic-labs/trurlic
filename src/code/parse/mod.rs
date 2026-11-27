@@ -29,6 +29,7 @@ pub(crate) use parser::{parse, text_of};
 #[cfg(test)]
 pub(in crate::code) use query::Rules;
 #[cfg(test)]
-pub(crate) use rust::LEXICON as RUST_LEXICON;
+pub(crate) use rust::{End, PathKind, Reading, is_attribute, is_inline_module, joined};
+pub(crate) use rust::{Led, lead};
 #[cfg(test)]
-pub(crate) use tokens::{Token, is_comment, tokens};
+pub(crate) use tokens::is_comment;

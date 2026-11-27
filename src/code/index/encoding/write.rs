@@ -1,6 +1,7 @@
 //! Writing an index's entry, and measuring what each part of it costs.
 
 use crate::code::index::file::{Definition, Doc, FileIndex, IndexFault, Indexed, ModuleFile};
+use crate::code::index::import::{Before, Binds, Import, ImportKind, PathStep};
 use crate::code::index::manifest::{
     Dependency, DependencySource, Manifest, Package, WorkspaceDependency,
 };
@@ -85,6 +86,18 @@ impl Measure {
             .saturating_add(inherited.saturating_mul(size_of::<WorkspaceDependency>()))
             .saturating_add(excluded.saturating_mul(size_of::<String>()));
         Self::of(slots, |out| out.manifest(manifest))
+    }
+
+    pub(in crate::code::index) fn step(step: &PathStep) -> usize {
+        Self::of(size_of::<PathStep>(), |out| out.step(step))
+    }
+
+    pub(in crate::code::index) fn macro_module(module: Option<ScopeId>) -> usize {
+        Self::of(size_of::<Option<ScopeId>>(), |out| out.scope(module))
+    }
+
+    pub(in crate::code::index) fn import(import: &Import) -> usize {
+        Self::of(size_of::<Import>(), |out| out.import(import))
     }
 
     /// A file's doc, whose code the entry's overhead holds.
@@ -182,8 +195,9 @@ impl<S: Sink> Writer<S> {
         self.0.put(hash.as_bytes());
     }
 
-    /// An index, in the order a read takes it: its scopes, definitions and
-    /// module files, its file's doc, then its manifest.
+    /// An index, in the order a read takes it: its scopes, definitions,
+    /// module files, steps, imports and macro modules, its file's doc,
+    /// then its manifest.
     fn index(&mut self, index: &FileIndex) {
         self.number(index.scopes.len());
         for scope in &index.scopes {
@@ -198,6 +212,18 @@ impl<S: Sink> Writer<S> {
         self.number(index.rust.module_files.len());
         for module in &index.rust.module_files {
             self.module_file(module);
+        }
+        self.number(index.rust.steps.len());
+        for step in &index.rust.steps {
+            self.step(step);
+        }
+        self.number(index.rust.imports.len());
+        for import in &index.rust.imports {
+            self.import(import);
+        }
+        self.number(index.rust.macro_modules.len());
+        for module in &index.rust.macro_modules {
+            self.scope(*module);
         }
         self.byte(doc_code(index.doc.as_ref()));
         self.doc(index.doc.as_ref());
@@ -311,6 +337,46 @@ impl<S: Sink> Writer<S> {
         self.number(module.scope.at());
         self.byte(role_code(module.role));
         self.optional_text(module.path.as_deref());
+    }
+
+    /// A step: a byte 0 and the scope of the module its path starts in,
+    /// or 1 and the step it comes after; then its segment.
+    fn step(&mut self, step: &PathStep) {
+        match step.before {
+            Before::Start(module) => {
+                self.byte(0);
+                self.scope(module);
+            }
+            Before::Step(at) => {
+                self.byte(1);
+                self.number(at);
+            }
+        }
+        self.text(&step.segment);
+    }
+
+    /// An import: its last step, a byte of its role in bit 0 and its kind
+    /// in bits 1 and 2, then for a `use` leaf what it binds: a byte 0 for
+    /// its last segment, 1 and the alias, 2 for nothing, or 3 for a glob.
+    fn import(&mut self, import: &Import) {
+        self.number(import.last);
+        let (kind, binds) = match &import.kind {
+            ImportKind::Code => (0, None),
+            ImportKind::Use(binds) => (1, Some(binds)),
+            ImportKind::Reexport(binds) => (2, Some(binds)),
+            ImportKind::Unresolvable => (3, None),
+        };
+        self.byte(role_code(import.role) | kind << 1);
+        match binds {
+            None => {}
+            Some(Binds::Last) => self.byte(0),
+            Some(Binds::Alias(name)) => {
+                self.byte(1);
+                self.text(name);
+            }
+            Some(Binds::Nothing) => self.byte(2),
+            Some(Binds::Glob) => self.byte(3),
+        }
     }
 
     fn segment(&mut self, segment: &Segment) {

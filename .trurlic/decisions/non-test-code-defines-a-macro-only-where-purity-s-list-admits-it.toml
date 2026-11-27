@@ -1,0 +1,18 @@
+component = "project"
+choice = "Non-test code defines a macro_rules! macro only where crate::purity's list admits it, with its reason; every boundary test refuses any other"
+reason = "A macro's body is pasted where it is invoked, and a metavariable makes a path of whatever tokens a caller hands in: $root::console::f with reach!(crate), $a $b console::f with paste!(crate ::), use crate::{$m}, or an attribute's $s. No reading of the definition's tokens follows such a path, so a module could name what its arrow does not reach while every boundary test passes. Chasing each form leaves the next one open. So every check of the boundary tests refuses a macro_rules! definition in any module's non-test code, pure or not, but those DEFINED_MACROS in crate::purity names with their reason. Today those are the console's out! and diag!, the one way to stdout and stderr the lints leave. An admitted one is refused too where a module is declared in its textual scope, whose code may invoke it with no path. Test code defines macros freely, as no boundary test judges it. A new macro is a new entry of the list, with its reason."
+alternatives = [
+    "Refuse each form a metavariable makes a path of: rejected because the forms are open-ended, and each new one passes until someone finds it",
+    "Expand macros before the check: rejected because it needs rustc's expansion, and the reader is a token reader shipped in the index",
+    "Refuse macro_rules! in the pure modules alone: rejected because a module of any row could then name past its arrow through a macro",
+]
+status = "proposed"
+origin = "imports between Rust files in the code index"
+created = "2026-11-28T03:24:37.986414367Z"
+anchors = [
+    { file = "src/console.rs", symbol = "diag" },
+    { file = "src/console.rs", symbol = "out" },
+    { file = "src/purity/read.rs", symbol = "DEFINED_MACROS" },
+    { file = "src/purity/read.rs", symbol = "macro_definitions" },
+    { file = "src/purity/tests.rs", symbol = "each_form_the_reading_cannot_follow_is_refused_by_every_check" },
+]

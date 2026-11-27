@@ -81,9 +81,24 @@ impl Item {
     }
 
     /// Whether what it holds may define more: a function's body, a type's
-    /// fields, a `const`'s initializer; a field's type holds nothing.
+    /// fields, a `const`'s initializer. A field's type is not walked, an
+    /// item of a block in it (`[u8; { struct X; 1 }]`) left out.
     pub(super) const fn holds_items(self) -> bool {
         !matches!(self, Self::Field)
+    }
+
+    /// Whether it may have generic parameters.
+    pub(super) const fn takes_generics(self) -> bool {
+        match self {
+            Self::Function
+            | Self::Struct
+            | Self::Union
+            | Self::Enum
+            | Self::Trait
+            | Self::Type
+            | Self::AssociatedType => true,
+            Self::Module | Self::Constant | Self::Static | Self::Variant | Self::Field => false,
+        }
     }
 
     /// Its kind, standing in `within` with the modifier `own`, and the

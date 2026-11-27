@@ -1,7 +1,8 @@
 //! The code tree of the walked files: crate > module > file >
-//! definitions, from the code index alone and from nothing an agent
-//! wrote. A file an anchor brought from outside the walk is no part of
-//! it, so the tree is a function of the walk.
+//! definitions, with the imports between its nodes, from the code index
+//! alone and from nothing an agent wrote. A file an anchor brought from
+//! outside the walk is no part of it, so the tree is a function of the
+//! walk.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -9,6 +10,7 @@ use super::code_facts::CodeFacts;
 use super::crate_graph::{Crate, crates};
 use super::crates::{Crates, Files};
 use super::entry::Entry;
+use super::imports::{FileEdge, file_edges};
 use super::path::parent;
 use super::places::{Module, ModulePath, ModulePaths, Place, places};
 use crate::code::index::FileIndex;
@@ -24,6 +26,8 @@ pub(crate) struct CodeTree<'i> {
     places: BTreeMap<&'i str, Place<'i>>,
     paths: ModulePaths<'i>,
     crates: BTreeMap<&'i str, Crate<'i>>,
+    /// The edges of each Rust file that imports anything, by its path.
+    imports: BTreeMap<&'i str, Vec<FileEdge<'i>>>,
     /// The nodes each node holds, the top's under `None`, in the order
     /// [`CodeTree::children`] states: a level is read in time
     /// proportional to its nodes, however deep the tree runs.
@@ -68,56 +72,20 @@ impl<'i> CodeTree<'i> {
         )
     )]
     pub(crate) fn of(facts: &'i CodeFacts) -> Self {
-        let mut files = Files::new();
-        let mut unread = BTreeSet::new();
-        let walked = facts
-            .entries
-            .iter()
-            .filter(|(path, _)| facts.walked.contains(*path));
-        for (path, entry) in walked {
-            let path = path.as_str();
-            match entry {
-                Entry::File {
-                    kind,
-                    index: Ok(index),
-                    ..
-                } => {
-                    files.insert(path, (*kind, index));
-                }
-                Entry::File {
-                    kind,
-                    index: Err(_),
-                    ..
-                } => {
-                    files.insert(path, (*kind, &NO_INDEX));
-                    unread.insert(path);
-                }
-                // The walk takes files of a kind with a resolver alone.
-                Entry::Directory | Entry::Unindexed => {}
-            }
-        }
+        let (files, unread) = walked_files(facts);
         let layout = Crates::of(files.keys().copied(), []);
         let mut paths = ModulePaths::default();
+        let places = places(&files, &layout, &mut paths);
+        let imports = file_edges(&files, &places, &mut paths, |path| facts.file_role(path));
         let mut tree = Self {
-            places: places(&files, &layout, &mut paths),
+            places,
             paths,
             crates: crates(&files, &unread),
+            imports,
             levels: BTreeMap::new(),
         };
         tree.levels = tree.levels();
         tree
-    }
-
-    /// The place of the walked file at `path`; `None` for any other path.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the imports between Rust files read an importing file's module path"
-        )
-    )]
-    pub(crate) fn place(&self, path: &str) -> Option<&Place<'i>> {
-        self.places.get(path)
     }
 
     /// The segments of `path`, a module path of this tree, outermost
@@ -162,6 +130,99 @@ impl<'i> CodeTree<'i> {
     )]
     pub(crate) fn children(&self, holder: Option<Node<'i>>) -> &[Node<'i>] {
         self.levels.get(&holder).map_or(&[], Vec::as_slice)
+    }
+
+    /// The imports between the nodes `holder` holds ([`CodeTree::children`]):
+    /// an edge from one to another where files below the first import
+    /// files below the second, and how many imports under each node do not
+    /// resolve. An import into a file outside `holder`, or below the node
+    /// it stands under, is no edge of the level. A file holds none. Read in
+    /// time linear in the nodes below `holder` and their files' edges.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the command that prints a level of the code tree prints its edges"
+        )
+    )]
+    pub(crate) fn edges(&self, holder: Option<Node<'i>>) -> LevelEdges<'i> {
+        let children = self.children(holder);
+        let (tally, unresolved) = self.tally(&self.files_under(children), children.len());
+        let node = |at: usize| children.get(at).copied();
+        let edges = tally.into_iter().filter_map(|((from, to), counted)| {
+            Some(ImportEdge {
+                from: node(from)?,
+                to: node(to)?,
+                imports: counted.imports,
+                reexports: counted.reexports,
+                test: counted.test,
+            })
+        });
+        let unresolved = unresolved
+            .into_iter()
+            .enumerate()
+            .filter(|(_, count)| *count > 0);
+        LevelEdges {
+            edges: edges.collect(),
+            unresolved: unresolved
+                .filter_map(|(at, count)| Some((node(at)?, count)))
+                .collect(),
+        }
+    }
+
+    /// The imports of the files of `under`, each by the place of the node
+    /// it is below among `nodes` nodes, summed by the places of the two
+    /// nodes, and how many under each node do not resolve. An import into
+    /// a file `under` does not hold, or below its own node, is left out.
+    fn tally(
+        &self,
+        under: &BTreeMap<&'i str, usize>,
+        nodes: usize,
+    ) -> (BTreeMap<(usize, usize), ImportTally>, Vec<usize>) {
+        let mut tally: BTreeMap<(usize, usize), ImportTally> = BTreeMap::new();
+        let mut unresolved = vec![0; nodes];
+        for (&file, &from) in under {
+            for edge in self.imports.get(file).map_or(&[][..], Vec::as_slice) {
+                let Some(to) = edge.to else {
+                    if let Some(count) = unresolved.get_mut(from) {
+                        *count += edge.imports + edge.reexports;
+                    }
+                    continue;
+                };
+                let Some(&to) = under.get(to).filter(|to| **to != from) else {
+                    continue;
+                };
+                let counted = tally.entry((from, to)).or_insert(ImportTally {
+                    imports: 0,
+                    reexports: 0,
+                    test: true,
+                });
+                counted.imports += edge.imports;
+                counted.reexports += edge.reexports;
+                counted.test &= edge.test;
+            }
+        }
+        (tally, unresolved)
+    }
+
+    /// Each walked file below `nodes`, with the place in `nodes` of the
+    /// one it is below.
+    fn files_under(&self, nodes: &[Node<'i>]) -> BTreeMap<&'i str, usize> {
+        let mut under = BTreeMap::new();
+        for (at, node) in nodes.iter().enumerate() {
+            let mut pending = vec![*node];
+            while let Some(node) = pending.pop() {
+                match node {
+                    Node::File(path) => {
+                        under.insert(path, at);
+                    }
+                    Node::Crate(_) | Node::Module { .. } | Node::Directory { .. } => {
+                        pending.extend(self.children(Some(node)));
+                    }
+                }
+            }
+        }
+        under
     }
 
     /// Each level of the tree, in the order [`CodeTree::children`]
@@ -227,6 +288,77 @@ impl<'i> CodeTree<'i> {
     }
 }
 
+/// The imports between the nodes of one level of the code tree
+/// ([`CodeTree::edges`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LevelEdges<'i> {
+    /// In the level's order of the node they come from, then of the node
+    /// they go to.
+    pub(crate) edges: Vec<ImportEdge<'i>>,
+    /// Each node of the level under which imports do not resolve, with
+    /// how many, re-exports included, in the level's order.
+    pub(crate) unresolved: Vec<(Node<'i>, usize)>,
+}
+
+/// The imports of the files below one node of a level into the files
+/// below another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ImportEdge<'i> {
+    pub(crate) from: Node<'i>,
+    pub(crate) to: Node<'i>,
+    /// The imports behind it that are dependencies: every import but a
+    /// re-export.
+    pub(crate) imports: usize,
+    /// The re-exports behind it, `use`s a visibility opens, which are no
+    /// dependency: a view of dependencies draws an edge of these alone as
+    /// none.
+    pub(crate) reexports: usize,
+    /// Whether every import behind it, dependency or re-export, is test
+    /// code.
+    pub(crate) test: bool,
+}
+
+/// What a level counts of the imports behind one edge.
+struct ImportTally {
+    imports: usize,
+    reexports: usize,
+    test: bool,
+}
+
+/// The walked files of `facts`, each with its kind and index, one with no
+/// index with an index of nothing; and those with no index.
+fn walked_files(facts: &CodeFacts) -> (Files<'_>, BTreeSet<&str>) {
+    let mut files = Files::new();
+    let mut unread = BTreeSet::new();
+    let walked = facts
+        .entries
+        .iter()
+        .filter(|(path, _)| facts.walked.contains(*path));
+    for (path, entry) in walked {
+        let path = path.as_str();
+        match entry {
+            Entry::File {
+                kind,
+                index: Ok(index),
+                ..
+            } => {
+                files.insert(path, (*kind, index));
+            }
+            Entry::File {
+                kind,
+                index: Err(_),
+                ..
+            } => {
+                files.insert(path, (*kind, &NO_INDEX));
+                unread.insert(path);
+            }
+            // The walk takes files of a kind with a resolver alone.
+            Entry::Directory | Entry::Unindexed => {}
+        }
+    }
+    (files, unread)
+}
+
 /// The node of `dir` in the crate `crate_dir`: the crate at its own
 /// directory, or at the code root outside every crate.
 fn directory<'t>(crate_dir: Option<&'t str>, dir: &'t str) -> Node<'t> {
@@ -238,7 +370,12 @@ fn directory<'t>(crate_dir: Option<&'t str>, dir: &'t str) -> Node<'t> {
 
 /// How the tests spell a place and a node, one line each.
 #[cfg(test)]
-impl CodeTree<'_> {
+impl<'i> CodeTree<'i> {
+    /// The place of the walked file at `path`; `None` for any other path.
+    pub(crate) fn place(&self, path: &str) -> Option<&Place<'i>> {
+        self.places.get(path)
+    }
+
     /// The place of the file at `path`: its crate's directory, `.` at the
     /// code root and `-` outside every crate, then its module, a Rust
     /// one's root directory and path, or how the file is in its directory.
@@ -270,6 +407,52 @@ impl CodeTree<'_> {
             }
             Crate::Unread => format!("{dir} unread"),
         }
+    }
+
+    /// Each walked file's edges, one a line: the importing file, the file
+    /// imported or `?` where its imports do not resolve, how many, and
+    /// `test` where every one of them is test code.
+    pub(crate) fn spelled_imports(&self) -> Vec<String> {
+        let edges = self.imports.iter().flat_map(|(from, edges)| {
+            edges.iter().map(move |edge| {
+                let test = if edge.test { " test" } else { "" };
+                let to = edge.to.unwrap_or("?");
+                let reexports = match edge.reexports {
+                    0 => String::new(),
+                    count => format!(" re-exports {count}"),
+                };
+                format!("{from} -> {to} {}{reexports}{test}", edge.imports)
+            })
+        });
+        edges.collect()
+    }
+
+    /// The level of the module of the root directory `root` and the path
+    /// `path` (`code::index`, `""` for the root module): each edge between
+    /// two of its modules that an import or a re-export of no test code is
+    /// behind, each module by the last segment of its path; and how many
+    /// imports under its nodes do not resolve.
+    pub(crate) fn code_imports(
+        &self,
+        root: &str,
+        path: &str,
+    ) -> (BTreeSet<(&'i str, &'i str)>, usize) {
+        let spelled = |of: ModulePath| self.module_path(of).join("::");
+        let holder = self.levels.values().flatten().find(|node| match node {
+            Node::Module {
+                root: at, path: of, ..
+            } => *at == root && spelled(*of) == path,
+            Node::Crate(_) | Node::Directory { .. } | Node::File(_) => false,
+        });
+        let name = |node: &Node<'i>| match *node {
+            Node::Module { path, .. } => self.paths.last(path),
+            Node::Crate(_) | Node::Directory { .. } | Node::File(_) => None,
+        };
+        let level = self.edges(Some(*holder.unwrap()));
+        let code = level.edges.iter().filter(|edge| !edge.test);
+        let edges = code.filter_map(|edge| Some((name(&edge.from)?, name(&edge.to)?)));
+        let unresolved = level.unresolved.iter().map(|(_, count)| count).sum();
+        (edges.collect(), unresolved)
     }
 
     /// `node`: a crate by its directory, a module by its root and path, a
@@ -610,16 +793,83 @@ mod tests {
         );
     }
 
-    /// The level below the node spelled `spelled`, the top's for `""`,
-    /// each node spelled.
-    fn level(tree: &CodeTree<'_>, spelled: &str) -> Vec<String> {
-        let holder = (!spelled.is_empty()).then(|| {
+    #[test]
+    fn a_level_holds_the_imports_between_its_nodes_and_the_unresolved_under_each() {
+        let files = [
+            ("Cargo.toml", "[package]\n"),
+            ("src/lib.rs", "mod a;\nmod b;\nmod c;\n"),
+            ("src/a/mod.rs", "mod x;\nmod y;\n"),
+            (
+                "src/c.rs",
+                "pub use crate::b::g;\npub use crate::gone::Y;\n",
+            ),
+            (
+                "src/a/x.rs",
+                "fn f() { crate::b::f(); crate::b::g(); super::y::h(); crate::none::here(); }\n",
+            ),
+            ("src/a/y.rs", "pub fn h() {}\n"),
+            (
+                "src/b.rs",
+                "pub fn f() {}\npub fn g() {}\n#[test]\nfn t() { crate::a::y::h(); }\n",
+            ),
+        ];
+        let facts = facts(&files, &[]);
+        let tree = CodeTree::of(&facts);
+
+        assert_eq!(
+            level_edges(&tree, "module src > "),
+            [
+                "module src > a -> module src > b 2",
+                "module src > b -> module src > a 1 test",
+                "module src > c -> module src > b 0 re-exports 1",
+                "module src > a: 1 unresolved",
+                "module src > c: 1 unresolved",
+            ]
+        );
+        assert_eq!(
+            level_edges(&tree, "module src > a"),
+            [
+                "module src > a::x -> module src > a::y 1",
+                "module src > a::x: 1 unresolved",
+            ]
+        );
+        assert_eq!(level_edges(&tree, ""), ["crate : 2 unresolved"]);
+    }
+
+    /// The edges of the level below the node spelled `spelled`, then the
+    /// unresolved imports under each of its nodes.
+    fn level_edges(tree: &CodeTree<'_>, spelled: &str) -> Vec<String> {
+        let found = tree.edges(holder(tree, spelled));
+        let edges = found.edges.iter().map(|edge| {
+            let test = if edge.test { " test" } else { "" };
+            let (from, to) = (tree.spelled_node(&edge.from), tree.spelled_node(&edge.to));
+            let reexports = match edge.reexports {
+                0 => String::new(),
+                count => format!(" re-exports {count}"),
+            };
+            format!("{from} -> {to} {}{reexports}{test}", edge.imports)
+        });
+        let unresolved = found
+            .unresolved
+            .iter()
+            .map(|(node, count)| format!("{}: {count} unresolved", tree.spelled_node(node)));
+        edges.chain(unresolved).collect()
+    }
+
+    /// The node spelled `spelled`; `None`, the top, for `""`.
+    fn holder<'i>(tree: &CodeTree<'i>, spelled: &str) -> Option<Node<'i>> {
+        (!spelled.is_empty()).then(|| {
             let mut nodes = tree.levels.values().flatten();
             *nodes
                 .find(|node| tree.spelled_node(node) == spelled)
                 .unwrap()
-        });
-        let level = tree.children(holder).iter();
+        })
+    }
+
+    /// The level below the node spelled `spelled`, the top's for `""`,
+    /// each node spelled.
+    fn level(tree: &CodeTree<'_>, spelled: &str) -> Vec<String> {
+        let level = tree.children(holder(tree, spelled)).iter();
         level.map(|node| tree.spelled_node(node)).collect()
     }
 }

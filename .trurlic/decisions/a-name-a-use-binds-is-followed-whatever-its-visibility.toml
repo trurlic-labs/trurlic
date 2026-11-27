@@ -1,0 +1,18 @@
+component = "code"
+choice = "Past a path's modules a name the module defines ends at its file, else a name any use there binds is followed; a name or a module more than one file holds is unresolved"
+reason = "Rust resolves a path through a name a use brings into a module, private or not: a child's super::Item reaches a private use of its parent. So the facts follow every use binding, a re-export and a private use alike, after the module's own definitions. A use in a block binds its names in that block alone, and one among a macro's tokens none the grammar declares: each is an import of its file that binds nothing in the module. A name that more than one binding or more than one file's definitions offer has no one target. An import that ends at a module more than one file holds, the root of a library and of a binary sharing src, or cfg twins, cannot say which file it means. Both are unresolved, never one picked. A path's last segment that names both a child module and an item the module defines or binds (mod index; and pub(crate) use dispatch::index;) is unresolved too, unless both are in one file. So is a child module of a module that holds a glob use or a macro invocation as an item, either of which may bring an item of its name. With more segments after it, it is the module, as rustc reads it, and a glob's own path is the module. So is an import standing in a module declared inside an item, whose block module no path names, and a super past the root."
+alternatives = [
+    "Follow pub use alone: rejected because super::Item through a parent's private use is common in tests and would read as unresolved",
+    "Pick the first file of a module two files hold: rejected because the edge it draws may be false",
+    "Carry the target root that reaches each file through the walk: rejected because the module node already joins both roots' files, and the state would double for a case the count states",
+]
+status = "proposed"
+origin = "imports between Rust files in the code index"
+created = "2026-11-27T23:27:09.715654771Z"
+anchors = [
+    { file = "src/code/facts/imports.rs", symbol = "Names" },
+    { file = "src/code/facts/imports.rs", symbol = "Resolver::file_of" },
+    { file = "src/code/facts/imports.rs", symbol = "Resolver::glob_target" },
+    { file = "src/code/facts/imports.rs", symbol = "Resolver::next" },
+    { file = "src/code/facts/imports.rs", symbol = "Resolver::only_file" },
+]

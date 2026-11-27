@@ -1,9 +1,9 @@
 //! What the tests read an index through: a file's index, alone or in a
 //! tree of C and C++ headers, the facts of a tree of files, each
 //! definition's path and the text of its span, and the inputs several
-//! modules' tests share. The purity check
-//! (`crate::purity`) reads a Rust file's tokens and a manifest's index
-//! through it too.
+//! modules' tests share. The boundary tests (`crate::purity`) read a
+//! Rust file's tree, its tokens and its paths through the index's one
+//! reader of Rust paths, and a manifest's index, through it too.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,7 +12,10 @@ use super::index::{FileKind, Indexed, ScopeId, Symbol};
 use super::parse::{BlankMacros, FileMacros, Rules, lexed, syntax_of};
 
 pub(crate) use super::index::Scopes;
-pub(crate) use super::parse::{RUST_LEXICON, Token, is_comment, parse, text_of, tokens};
+pub(crate) use super::parse::{
+    End, Led, PathKind, Reading, is_attribute, is_comment, is_inline_module, joined, lead, parse,
+    text_of,
+};
 
 /// The index of `bytes`, a file of `kind` alone in its tree: a C or C++
 /// file blanks what its own `#define`s make blankable.

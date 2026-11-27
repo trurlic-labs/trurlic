@@ -42,4 +42,6 @@ pub(crate) use findings::{checked_findings, tree_findings};
 pub(crate) use repair::{Seen, still_holding};
 
 #[cfg(test)]
+pub(crate) mod testing;
+#[cfg(test)]
 mod tests;

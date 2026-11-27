@@ -3,6 +3,7 @@
 use crate::code::index::file::{
     Definition, Doc, FileIndex, FileKind, IndexFault, Indexed, ModuleFile, RustFacts,
 };
+use crate::code::index::import::{Before, Binds, Import, ImportKind, PathStep};
 use crate::code::index::kinds::{DefinitionKind, Role, Visibility};
 use crate::code::index::manifest::{
     Dependency, DependencyKind, DependencySource, Manifest, Package, Workspace, WorkspaceDependency,
@@ -154,11 +155,7 @@ impl<'b> Reader<'b> {
     fn index(&mut self) -> Option<FileIndex> {
         let scopes = self.scopes()?;
         let definitions = self.definitions(scopes.len())?;
-        let count = self.items::<ModuleFile>()?;
-        let mut module_files = Vec::with_capacity(count);
-        for _ in 0..count {
-            module_files.push(self.module_file(scopes.len())?);
-        }
+        let rust = self.rust_facts(scopes.len())?;
         let code = self.byte()?;
         let doc = self.doc(code)?;
         let manifest = match self.byte()? {
@@ -173,8 +170,82 @@ impl<'b> Reader<'b> {
             scopes,
             definitions,
             doc,
-            rust: RustFacts { module_files },
+            rust,
             manifest,
+        })
+    }
+
+    /// What a Rust file holds besides its definitions, in an index of
+    /// `scopes` scopes: its module files, its steps, each after a step
+    /// below it, its imports, each ending at one of them, and its
+    /// modules that hold a macro invocation as an item.
+    fn rust_facts(&mut self, scopes: usize) -> Option<RustFacts> {
+        let count = self.items::<ModuleFile>()?;
+        let mut module_files = Vec::with_capacity(count);
+        for _ in 0..count {
+            module_files.push(self.module_file(scopes)?);
+        }
+        let count = self.items::<PathStep>()?;
+        let mut steps = Vec::with_capacity(count);
+        for own in 0..count {
+            steps.push(self.step(scopes, own)?);
+        }
+        let count = self.items::<Import>()?;
+        let mut imports = Vec::with_capacity(count);
+        for _ in 0..count {
+            imports.push(self.import(steps.len())?);
+        }
+        let count = self.items::<Option<ScopeId>>()?;
+        let mut macro_modules = Vec::with_capacity(count);
+        for _ in 0..count {
+            let module = self.scope(scopes)?;
+            // Each once, in order, as the walk writes them.
+            if macro_modules.last().is_some_and(|last| *last >= module) {
+                return None;
+            }
+            macro_modules.push(module);
+        }
+        Some(RustFacts {
+            module_files,
+            steps,
+            imports,
+            macro_modules,
+        })
+    }
+
+    /// The step at `own`, in an index of `scopes` scopes.
+    fn step(&mut self, scopes: usize, own: usize) -> Option<PathStep> {
+        let before = match self.byte()? {
+            0 => Before::Start(self.scope(scopes)?),
+            1 => Before::Step(self.number().filter(|at| *at < own)?),
+            _ => return None,
+        };
+        let segment = self.text()?;
+        Some(PathStep { before, segment })
+    }
+
+    /// An import whose last step is one of `steps`.
+    fn import(&mut self, steps: usize) -> Option<Import> {
+        let last = self.number().filter(|at| *at < steps)?;
+        let marks = self.byte()?;
+        let role = role_of(marks & 1)?;
+        let kind = match marks >> 1 {
+            0 => ImportKind::Code,
+            1 => ImportKind::Use(self.binds()?),
+            2 => ImportKind::Reexport(self.binds()?),
+            3 => ImportKind::Unresolvable,
+            _ => return None,
+        };
+        Some(Import { last, role, kind })
+    }
+
+    fn binds(&mut self) -> Option<Binds> {
+        Some(match self.byte()? {
+            0 => Binds::Last,
+            1 => Binds::Alias(self.text()?),
+            2 => Binds::Nothing,
+            3 => Binds::Glob,
+            _ => return None,
         })
     }
 

@@ -1,13 +1,18 @@
 //! The walk of tree-sitter-rust's tree that defines each item it holds,
 //! from an explicit stack, each node visited once with the container it
-//! stands in, the role its attributes give it and its doc ([`index`]).
+//! stands in, the role its attributes give it and its doc ([`index`]),
+//! then adds the imports the file's reading names (`imports.rs`).
+
+use std::collections::BTreeSet;
 
 use tree_sitter::Node;
 
 use super::docs;
+use super::imports::{self, Regions};
 use super::items::{Item, Within};
 use super::lexicon::LEXICON;
 use super::marks::{self, Marks};
+use super::reading::{self, Reading};
 use super::reexports::{self, Reexport};
 use super::silent;
 use crate::code::index::{
@@ -18,23 +23,30 @@ use crate::code::parse::parser::{self, text_of};
 use crate::code::parse::tree_index::TreeIndex;
 use crate::code::parse::units::Leaves;
 
-/// The index of `text`, a Rust file, with its doc. Its hashes leave out
-/// the tokens of no meaning (`silent.rs`).
+/// The index of `text`, a Rust file, with its doc and its imports. Its
+/// hashes leave out the tokens of no meaning (`silent.rs`). One walk of
+/// its tokens gives both the units of its hashes and its reading.
 pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let tree = parser::parse(text, &tree_sitter_rust::LANGUAGE.into())?;
     let silent = silent::silent_tokens(tree.root_node());
+    let mut reading = Reading::default();
+    let leaves = Leaves::of(&tree, (text, &LEXICON), &silent, |event| {
+        reading.take(event, text);
+    });
     let mut walk = Walk {
         text,
-        build: TreeIndex::new(
-            text,
-            Lines::of(text.as_bytes()),
-            Leaves::of(&tree, text, &LEXICON, &silent),
-            scopes,
-        ),
+        build: TreeIndex::new(text, Lines::of(text.as_bytes()), leaves, scopes),
         reexports: Vec::new(),
+        regions: Regions::default(),
+        module_scopes: BTreeSet::new(),
+        macro_modules: BTreeSet::new(),
     };
     walk.run(tree.root_node())?;
     reexports::define(walk.reexports, &mut walk.build, text)?;
+    imports::add(&reading, walk.regions, &mut walk.build)?;
+    for module in walk.macro_modules {
+        walk.build.add_macro_module(module)?;
+    }
     if let Some(doc) = docs::first_paragraph(&[], Some(tree.root_node()), text) {
         walk.build.document_file(doc)?;
     }
@@ -49,6 +61,14 @@ struct Walk<'t> {
     /// The leaves of the `pub use`s, defined after the walk, once the
     /// paths of the file's items are all found.
     reexports: Vec<Reexport>,
+    /// Where the bytes of its test items and of its inline modules are,
+    /// which its imports are read against.
+    regions: Regions<'t>,
+    /// The scope of each inline module.
+    module_scopes: BTreeSet<ScopeId>,
+    /// Each module, by its inline module's scope or `None` for the file's
+    /// own, that holds a macro invocation as an item.
+    macro_modules: BTreeSet<Option<ScopeId>>,
 }
 
 /// Nodes whose tokens are no items: an attribute's, a macro body's, a
@@ -107,7 +127,7 @@ impl Walk<'_> {
         while let Some(visit) = stack.pop() {
             let node = visit.node;
             if let Some(inner) = self.visit(&visit)? {
-                push_children(&mut stack, node, inner, self.text);
+                push_children(&mut stack, node, inner, self.text, &mut self.regions);
             }
         }
         Ok(())
@@ -132,6 +152,17 @@ impl Walk<'_> {
                 self.reexports.extend(leaves);
                 None
             }
+            "macro_invocation" => {
+                let module = context.scope;
+                if module.is_none_or(|scope| self.module_scopes.contains(&scope)) {
+                    self.macro_modules.insert(module);
+                }
+                Some(context)
+            }
+            "block" => {
+                self.note_block_items(node);
+                Some(context)
+            }
             "foreign_mod_item" => Some(Context {
                 within: Within::Items,
                 ..context
@@ -150,8 +181,9 @@ impl Walk<'_> {
             node, mut context, ..
         } = *visit;
         let body = node.child_by_field_name("body");
-        if let Some(body) = body {
-            context.role = marks::inner_role(body, context.role, self.text);
+        context.role = self.held_role(visit, body);
+        if item.takes_generics() {
+            self.note_generics(node);
         }
         let own = marks::visibility_of(node, self.text);
         let (kind, inner_within) = item.kind(context.within, own);
@@ -173,14 +205,66 @@ impl Walk<'_> {
             self.build
                 .define(scope, visit.start..node.end_byte(), what, doc)?;
         }
-        if item == Item::Module && body.is_none() {
-            self.add_module_file(scope, context.role, visit)?;
+        match (item == Item::Module, body) {
+            (true, None) => self.add_module_file(scope, context.role, visit)?,
+            (true, Some(_)) => {
+                self.regions.add_module(node.start_byte(), scope);
+                self.module_scopes.insert(scope);
+            }
+            (false, _) => {}
         }
         Ok(Context {
             scope: Some(scope),
             within: inner_within,
             role: context.role,
         })
+    }
+
+    /// Note the name of each item `block` holds, which a path in the
+    /// block may name in place of a child module of the same name.
+    fn note_block_items(&mut self, block: Node<'_>) {
+        let mut cursor = block.walk();
+        for item in block.named_children(&mut cursor) {
+            if Item::of_node(item.kind()).is_none() {
+                continue;
+            }
+            if let Some(name) = item.child_by_field_name("name") {
+                let name = text_of(name, self.text);
+                self.regions.add_bound(name, block.byte_range());
+            }
+        }
+    }
+
+    /// Note the name of each generic parameter of `item` but a lifetime,
+    /// which a path in the item may name in place of a child module of the
+    /// same name.
+    fn note_generics(&mut self, item: Node<'_>) {
+        let Some(parameters) = reading::type_parameters(item) else {
+            return;
+        };
+        let mut cursor = parameters.walk();
+        for parameter in parameters.named_children(&mut cursor) {
+            let name = parameter.child_by_field_name("name");
+            if let Some(name) = name.filter(|_| parameter.kind() != "lifetime_parameter") {
+                self.regions
+                    .add_bound(text_of(name, self.text), item.byte_range());
+            }
+        }
+    }
+
+    /// The role of what `visit`'s item holds: its own, or test code where
+    /// an inner attribute of its body `body` makes it, the item then noted
+    /// as test code where what holds it is not.
+    fn held_role(&mut self, visit: &Visit<'_>, body: Option<Node<'_>>) -> Role {
+        let role = visit.context.role;
+        let Some(body) = body else {
+            return role;
+        };
+        let held = marks::inner_role(body, role, self.text);
+        if held != role {
+            self.regions.add_test(visit.start..visit.node.end_byte());
+        }
+        held
     }
 
     /// Add `scope`, of a `mod name;` that `visit` declares with `role`,
@@ -237,6 +321,7 @@ impl Walk<'_> {
         let Some(self_type) = node.child_by_field_name("type") else {
             return Ok(context);
         };
+        self.note_generics(node);
         let type_segment = type_segment(self_type, &self.build);
         Ok(match node.child_by_field_name("trait") {
             Some(trait_node) => {
@@ -297,11 +382,18 @@ impl Leading<'_> {
 /// Push the named children of `node` to visit in `context`, each with
 /// where it starts: at the first of the attributes and outer doc comments
 /// right before it; each with the role its attributes give it, and an
-/// inner `#![cfg(test)]` gives every child; and each with those nodes.
-fn push_children<'n>(stack: &mut Vec<Visit<'n>>, node: Node<'n>, context: Context, text: &str) {
+/// inner `#![cfg(test)]` gives every child; and each with those nodes. A
+/// child that is test code where `node`'s children are not is noted in
+/// `regions`.
+fn push_children<'n>(
+    stack: &mut Vec<Visit<'n>>,
+    node: Node<'n>,
+    context: Context,
+    text: &str,
+    regions: &mut Regions<'_>,
+) {
     let inner_role = marks::inner_role(node, context.role, text);
-    let mut cursor = node.walk();
-    let children: Vec<Node<'n>> = node.named_children(&mut cursor).collect();
+    let children: Vec<Node<'n>> = node.named_children(&mut node.walk()).collect();
     let mut leading: Option<Leading<'n>> = None;
     for child in children {
         let attribute = child.kind() == "attribute_item";
@@ -327,6 +419,9 @@ fn push_children<'n>(stack: &mut Vec<Visit<'n>>, node: Node<'n>, context: Contex
             }
             false => run.attached,
         };
+        if leading.is_none() && marks.role != context.role {
+            regions.add_test(start..child.end_byte());
+        }
         stack.push(Visit {
             node: child,
             context: Context {

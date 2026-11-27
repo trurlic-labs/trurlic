@@ -214,6 +214,10 @@ fn hostile_rust_is_refused_or_read_in_linear_work() {
             "macro repetitions",
             format!("m!{{{}", "$($".repeat((mib - 4) / 3)),
         ),
+        (
+            "nested blocks of uses",
+            format!("fn f() {}", "{ use a::b; ".repeat((mib - 8) / 12)),
+        ),
     ];
     for (case, text) in cases {
         assert!(text.len() <= mib, "{case}");

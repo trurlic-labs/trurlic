@@ -11,7 +11,7 @@ status = "proposed"
 created = "2026-11-23T20:24:02.826381615Z"
 anchors = [
     { file = "benches/corpus.rs" },
-    { file = "src/lib.rs", symbol = "bench" },
+    { file = "src/bench.rs" },
     { file = "src/mcp/server.rs", symbol = "Server::serve_one" },
 ]
 depends_on = [

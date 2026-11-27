@@ -1,18 +1,41 @@
-//! What the checks read of a crate ([`Crate`]): its non-test code as
-//! tokens, each in the module it stands in; the forms that code takes
-//! which the reading cannot follow, refused by every check; the
-//! dependencies its manifest states.
+//! What the checks read of a crate ([`Crate`]). That is its non-test code
+//! as tokens and paths, each in the module it stands in, as the code
+//! index's one reader of Rust paths reads them (`Reading`). It is too the
+//! forms that code takes which no reading can follow, refused by every
+//! check, and the dependencies its manifest states.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::{ControlFlow, Range};
+use std::ops::Range;
 use std::path::Path;
 
 use tree_sitter::Node;
 
 use crate::code::FileKind;
-use crate::code::testing::{RUST_LEXICON, Scopes, Token as Event, parse, text_of};
+use crate::code::testing::{
+    End, Led, PathKind, Reading, Scopes, is_attribute, is_inline_module, joined, lead, parse,
+    text_of,
+};
 
 use super::test_code::{FileMarks, Held, held_by, modules_dir, test_files};
+
+/// The `macro_rules!` definitions non-test code may hold, each the path
+/// of its file from the crate's directory, its name and why. Any other is
+/// refused. What a macro's body names reaches each module that invokes
+/// it unseen. A metavariable may make a path of any tokens a caller hands
+/// in (`$root::x`, `$a $b x`, `use crate::{$m}`, an attribute's `$s`),
+/// which no reading follows.
+const DEFINED_MACROS: &[(&str, &str, &str)] = &[
+    (
+        "src/console.rs",
+        "out",
+        "`println!` for command output: the one way to stdout, as a lint makes it",
+    ),
+    (
+        "src/console.rs",
+        "diag",
+        "`eprintln!` for diagnostics: the one way to stderr, as a lint makes it",
+    ),
+];
 
 /// What a `#[path]` is refused as. It is refused in test code too: the
 /// file it names is read as the module its own path spells.
@@ -32,10 +55,12 @@ pub(crate) struct Crate {
     pub(super) dependencies: Vec<String>,
 }
 
-/// What the check reads of one Rust file.
+/// What the check reads of one Rust file, outside its test items.
 pub(super) struct Read {
-    /// Its tokens outside test items, in order.
+    /// Its tokens, in order.
     pub(super) tokens: Vec<Token>,
+    /// The paths its tokens name, a `use` list's entries each one.
+    pub(super) paths: Vec<Named>,
     /// The path from the crate root of the file's module, then of each
     /// inline module in it, in the order the tokens enter them.
     pub(super) modules: Vec<Vec<String>>,
@@ -51,6 +76,53 @@ pub(super) struct Token {
     pub(super) text: String,
     /// The module it stands in, an index into [`Read::modules`].
     pub(super) module: usize,
+}
+
+/// A path a file's non-test code names.
+pub(super) struct Named {
+    pub(super) line: usize,
+    /// Its segments as spelled, a glob as `*` and an alias's `as` kept
+    /// last (`std::fs::as` for `use std::fs as disk`).
+    pub(super) segments: Vec<String>,
+    /// The module its first segment stands in, an index into
+    /// [`Read::modules`].
+    pub(super) module: usize,
+    /// Whether it is the tree of a `use` a visibility opens, among a
+    /// macro's tokens or not: a re-export.
+    pub(super) exported: bool,
+}
+
+impl Named {
+    /// The segments from the crate root this path names, standing in
+    /// `module` (segments from the crate root), when it goes into the
+    /// crate: its leading `crate`, `$crate`, `self` and `super`s read from
+    /// `module` as the code index reads them (`lead`), then its other
+    /// segments but `self`. `None` for a path that starts with a name or
+    /// leads above the root, and for one only `self`s lead, which stays in
+    /// its module (`self`, `self::x`).
+    pub(super) fn crate_path<'a>(&'a self, module: &'a [String]) -> Option<Vec<&'a str>> {
+        // The module a leading segment leads to: the first `within`
+        // segments of `module`.
+        let mut within = None;
+        let mut leaves = false;
+        let mut rest = self.segments.iter().map(String::as_str).peekable();
+        while let Some(segment) = rest.peek() {
+            let from = within.unwrap_or(module.len());
+            match lead(segment, from, 0, |from: usize| from.checked_sub(1)) {
+                Led::Module(to) => within = Some(to),
+                Led::AboveRoot => return None,
+                Led::Name => break,
+            }
+            leaves |= *segment != "self";
+            rest.next();
+        }
+        let above = module
+            .get(..within.filter(|_| leaves)?)
+            .unwrap_or_default()
+            .iter();
+        let rest = rest.filter(|segment| *segment != "self");
+        Some(above.map(String::as_str).chain(rest).collect())
+    }
 }
 
 impl Crate {
@@ -128,19 +200,13 @@ pub(super) fn is_within(path: &[impl AsRef<str>], module: &str) -> bool {
     module.split("::").all(|part| segments.next() == Some(part))
 }
 
-/// A run of letters, digits and underscores: an identifier or a keyword.
-pub(super) fn is_word(token: &str) -> bool {
-    !token.is_empty() && token.chars().all(|c| c.is_alphanumeric() || c == '_')
-}
-
 /// What the check reads of `text`, the file at `path`, and what decides
 /// whether it is test code whole.
 fn read(path: &str, text: &str) -> (Read, FileMarks) {
     let tree = parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap();
     let marks = marks(tree.root_node(), text);
     let held = |at: usize| marks.held.iter().any(|range| range.contains(&at));
-    let own = module_path(path).into_iter().map(str::to_owned).collect();
-    let walked = walk(tree.root_node(), text, own, held);
+    let reading = Reading::of(tree.root_node(), text);
     let mut refused: Vec<(usize, &'static str)> = marks
         .refused
         .iter()
@@ -148,18 +214,14 @@ fn read(path: &str, text: &str) -> (Read, FileMarks) {
         .map(|&(line, _, what)| (line, what))
         .collect();
     refused.extend(marks.paths.iter().map(|&line| (line, PATH_ATTRIBUTE)));
-    refused.extend(macro_scopes(&marks, held));
-    refused.extend(walked.refused);
-    refused.extend(refused_tokens(&walked.tokens));
+    refused.extend(macro_definitions(path, &marks, held));
     if tree.root_node().has_error() {
         refused.push((1, "a file the grammar does not parse whole"));
     }
+    let mut file = viewed(&reading, module_path(path), text, held);
+    refused.extend(refused_tokens(&file.tokens));
     refused.sort_unstable();
-    let file = Read {
-        tokens: walked.tokens,
-        modules: walked.modules,
-        refused,
-    };
+    file.refused = refused;
     let declared = marks.declared.into_iter();
     let file_marks = FileMarks {
         declared: declared.map(|(name, at)| (name, held(at))).collect(),
@@ -168,10 +230,78 @@ fn read(path: &str, text: &str) -> (Read, FileMarks) {
     (file, file_marks)
 }
 
+/// `reading`, of `text`, as the checks view it: the tokens and paths
+/// outside the bytes `held` marks, each in its module, `own` the file's.
+fn viewed(
+    reading: &Reading<'_>,
+    own: Vec<String>,
+    text: &str,
+    held: impl Fn(usize) -> bool,
+) -> Read {
+    let mut modules = vec![own.clone()];
+    for inline in &reading.modules {
+        let mut names = Vec::new();
+        let mut item = Some(*inline);
+        while let Some(node) = item {
+            if is_inline_module(node) {
+                let name = node.child_by_field_name("name");
+                names.push(name.map_or("", |name| text_of(name, text)).to_owned());
+            }
+            item = node.parent();
+        }
+        names.reverse();
+        modules.push(own.iter().cloned().chain(names).collect());
+    }
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(text.match_indices('\n').map(|(at, _)| at + 1))
+        .collect();
+    let line = |at: usize| starts.partition_point(|start| *start <= at);
+    let module = |inline: Option<usize>| inline.map_or(0, |inline| inline + 1);
+    let tokens = reading.tokens.iter().filter(|token| !held(token.start));
+    let tokens = tokens.map(|token| Token {
+        line: line(token.start),
+        text: token.text.to_string(),
+        module: module(token.module),
+    });
+    let tokens = tokens.collect();
+    let paths = reading.paths();
+    let mut named = Vec::new();
+    for path in &paths.named {
+        let Some(first) = reading.tokens.get(path.first).filter(|t| !held(t.start)) else {
+            continue;
+        };
+        let mut segments = Vec::new();
+        let mut at = Some(path.last);
+        while let Some(token) = at {
+            segments.push(reading.tokens[token].text.to_string());
+            at = paths.before(token);
+        }
+        segments.reverse();
+        match path.end {
+            End::Path => {}
+            End::Glob => segments.push("*".to_owned()),
+            End::Alias(_) => segments.push("as".to_owned()),
+        }
+        let exported = PathKind::InMacro { exported: true };
+        named.push(Named {
+            line: line(first.start),
+            segments,
+            module: module(first.module),
+            exported: path.kind == PathKind::Reexport || path.kind == exported,
+        });
+    }
+    Read {
+        tokens,
+        paths: named,
+        modules,
+        refused: Vec::new(),
+    }
+}
+
 /// What one pass over a file's tree finds, test items included: the
 /// bytes of each item a test mark holds, each `mod name;` with its first
-/// byte, each module whose file the check cannot place (line, first byte,
-/// why), the line of each `#[path]`, each `macro_rules!` definition, the
+/// byte, each form the check cannot read through (line, first byte,
+/// what), the line of each `#[path]`, each `macro_rules!` definition, the
 /// first byte of each `mod` item, and whether the file is test code whole.
 #[derive(Default)]
 struct Marks {
@@ -184,10 +314,11 @@ struct Marks {
     test: bool,
 }
 
-/// A `macro_rules!` definition: its line, its bytes, and the bytes of the
-/// block or file it stands in, the textual scope it opens in.
+/// A `macro_rules!` definition: its line, its name, its bytes, and the
+/// bytes of the block or file it stands in, the textual scope it opens in.
 struct Macro {
     line: usize,
+    name: String,
     bytes: Range<usize>,
     scope: Range<usize>,
 }
@@ -207,6 +338,12 @@ fn marks(root: Node<'_>, text: &str) -> Marks {
             Some(Held::File) => marks.test = true,
             None => {}
         }
+        if is_attribute(node, text) {
+            let unread = unread_in_attribute(node, text).into_iter();
+            marks
+                .refused
+                .extend(unread.map(|what| (line, node.start_byte(), what)));
+        }
         match node.kind() {
             "attribute_item" | "inner_attribute_item" if names_a_path(node, text) => {
                 marks.paths.push(line);
@@ -218,6 +355,10 @@ fn marks(root: Node<'_>, text: &str) -> Marks {
             ),
             "macro_definition" => marks.macros.push(Macro {
                 line,
+                name: node
+                    .child_by_field_name("name")
+                    .map_or("", |name| text_of(name, text))
+                    .to_owned(),
                 bytes: node.byte_range(),
                 scope: node.parent().map_or(0..0, |scope| scope.byte_range()),
             }),
@@ -231,6 +372,30 @@ fn marks(root: Node<'_>, text: &str) -> Marks {
         }
     }
     marks
+}
+
+/// What in `attribute`, one whose strings the reading reads for paths,
+/// the reading cannot follow: `macro_use`, which brings a module's macros
+/// into scope with no path, and a string with a `\x` or `\u` escape,
+/// which may spell any path.
+fn unread_in_attribute(attribute: Node<'_>, text: &str) -> Vec<&'static str> {
+    let mut found = Vec::new();
+    let mut pending = vec![attribute];
+    while let Some(node) = pending.pop() {
+        let mut cursor = node.walk();
+        pending.extend(node.children(&mut cursor));
+        let spelled = text_of(node, text);
+        if node.kind() == "identifier" && spelled == "macro_use" {
+            found.push("#[macro_use]");
+        }
+        let whole = joined(spelled);
+        if node.kind().ends_with("string_literal")
+            && (whole.contains("\\x") || whole.contains("\\u"))
+        {
+            found.push("an escape in an attribute's string");
+        }
+    }
+    found
 }
 
 /// Records `node`, a `mod name;` item, in `marks`.
@@ -247,194 +412,47 @@ fn declared(node: Node<'_>, text: &str, marks: &mut Marks) {
     }
 }
 
-/// The line of each `macro_rules!` definition outside test items after
-/// which a module outside test items is declared in the definition's
-/// textual scope: the module's code may invoke it with no path, so a
-/// path its body spells counts against the module unseen.
-fn macro_scopes(marks: &Marks, held: impl Fn(usize) -> bool) -> Vec<(usize, &'static str)> {
-    marks
-        .macros
-        .iter()
-        .filter(|definition| !held(definition.bytes.start))
-        .filter(|definition| {
-            marks.modules.iter().any(|&at| {
-                !held(at) && at >= definition.bytes.end && definition.scope.contains(&at)
-            })
-        })
-        .map(|definition| {
-            (
-                definition.line,
-                "a module in the textual scope of a macro_rules!",
-            )
-        })
-        .collect()
-}
-
-/// What a walk of a file's tokens yields: [`Read::tokens`],
-/// [`Read::modules`], and each form of an attribute it refuses
-/// ([`push_token`]).
-struct Walked {
-    tokens: Vec<Token>,
-    modules: Vec<Vec<String>>,
-    refused: Vec<(usize, &'static str)>,
-}
-
-/// The tokens of `root`, a file's tree, outside the bytes `held` marks,
-/// each with the module it stands in, `own` the file's.
-fn walk(root: Node<'_>, text: &str, own: Vec<String>, held: impl Fn(usize) -> bool) -> Walked {
-    let mut walked = Walked {
-        tokens: Vec::new(),
-        modules: vec![own],
-        refused: Vec::new(),
+/// The line and what of each `macro_rules!` definition outside test
+/// items in the file at `path` that [`DEFINED_MACROS`] does not admit. An
+/// admitted one is refused too where a module outside test items is
+/// declared after it in its textual scope, whose code may invoke it with
+/// no path.
+fn macro_definitions(
+    path: &str,
+    marks: &Marks,
+    held: impl Fn(usize) -> bool,
+) -> Vec<(usize, &'static str)> {
+    let listed = |name: &str| DEFINED_MACROS.iter().any(|m| (m.0, m.1) == (path, name));
+    let scoped = |definition: &Macro| {
+        let scope = &definition.scope;
+        let after = |at: usize| !held(at) && at >= definition.bytes.end && scope.contains(&at);
+        marks.modules.iter().any(|&at| after(at))
     };
-    let mut open: Vec<usize> = vec![0];
-    let mut attributes = 0_usize;
-    crate::code::testing::tokens(root, text, &RUST_LEXICON, |event| {
-        match event {
-            Event::Enter(node) if is_attribute(node, text) => attributes += 1,
-            Event::Leave(node) if is_attribute(node, text) => {
-                attributes = attributes.saturating_sub(1);
-            }
-            Event::Enter(node) if is_inline_module(node) => {
-                let name = node
-                    .child_by_field_name("name")
-                    .map_or("", |name| text_of(name, text));
-                let above = open.last().and_then(|at| walked.modules.get(*at));
-                let mut path = above.cloned().unwrap_or_default();
-                path.push(name.to_owned());
-                open.push(walked.modules.len());
-                walked.modules.push(path);
-            }
-            Event::Leave(node) if is_inline_module(node) => {
-                open.pop();
-            }
-            Event::Node(node) if !held(node.start_byte()) => {
-                let module = *open.last().unwrap_or(&0);
-                push_token(node, text, (module, attributes > 0), &mut walked);
-            }
-            // A held token, a gap, a run, a hole, and any other node
-            // entered or left.
-            _ => {}
-        }
-        ControlFlow::Continue(())
+    let refused = marks.macros.iter().filter(|m| !held(m.bytes.start));
+    let refused = refused.filter_map(|definition| match listed(&definition.name) {
+        false => Some((definition.line, "a macro_rules! no list admits")),
+        true if scoped(definition) => Some((
+            definition.line,
+            "a module in the textual scope of a macro_rules!",
+        )),
+        true => None,
     });
-    walked
-}
-
-/// Pushes the token `node`, standing in the module `module` and inside an
-/// attribute or not, onto `walked`. Inside an attribute, a string is
-/// read for the paths it spells ([`spelled_paths`]) and refused when it
-/// holds a `\x` or `\u` escape, which may spell any of them; `macro_use` is
-/// refused, as it brings a module's macros into scope with no path.
-fn push_token(
-    node: Node<'_>,
-    text: &str,
-    (module, in_attribute): (usize, bool),
-    walked: &mut Walked,
-) {
-    let line = node.start_position().row + 1;
-    let spelled = text_of(node, text);
-    let token = |text: &str| Token {
-        line,
-        text: text.to_owned(),
-        module,
-    };
-    let name = match node.kind() {
-        "identifier" => spelled.strip_prefix("r#").unwrap_or(spelled),
-        _ => spelled,
-    };
-    if in_attribute && node.kind().ends_with("string_literal") {
-        // A line's closing `\` drops the newline and the next line's
-        // leading whitespace.
-        let lines: Vec<&str> = spelled.split("\\\n").map(str::trim_start).collect();
-        let joined = lines.concat();
-        if joined.contains("\\x") || joined.contains("\\u") {
-            let why = "an escape in an attribute's string";
-            walked.refused.push((line, why));
-        }
-        walked
-            .tokens
-            .extend(spelled_paths(&joined).into_iter().map(token));
-    } else if in_attribute && name == "macro_use" {
-        walked.refused.push((line, "#[macro_use]"));
-    }
-    walked.tokens.push(token(name));
-}
-
-/// The tokens of each path of two segments or more that `literal`, a
-/// string literal, spells anywhere in it: segments joined by `::`, with
-/// or without whitespace around it (`"crate::x::f"`, `"Vec<super::T>"`,
-/// `"T: crate :: Bound"`). A single word names an item in scope, which a
-/// `use` or a definition the check reads accounts for; no macro puts
-/// `$crate` into a string. A leading `::` is left out, as a path in code
-/// is read without it.
-fn spelled_paths(literal: &str) -> Vec<&str> {
-    let lexemes = lexemes(literal);
-    let is_segment = |at: usize| lexemes.get(at).is_some_and(|lexeme| is_word(lexeme));
-    let mut tokens = Vec::new();
-    let mut at = 0;
-    while at < lexemes.len() {
-        let mut end = at + 1;
-        while is_segment(at) && lexemes.get(end) == Some(&"::") && is_segment(end + 1) {
-            end += 2;
-        }
-        tokens.extend(
-            lexemes
-                .get(at..end)
-                .filter(|run| run.len() > 1)
-                .unwrap_or_default(),
-        );
-        at = end;
-    }
-    tokens
-}
-
-/// `text` cut into words, `::` and single characters, whitespace dropped.
-fn lexemes(text: &str) -> Vec<&str> {
-    let mut found = Vec::new();
-    let mut rest = text;
-    while let Some(first) = rest.chars().next() {
-        let word = rest
-            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .unwrap_or(rest.len());
-        let length = match word {
-            0 if rest.starts_with("::") => 2,
-            0 => first.len_utf8(),
-            word => word,
-        };
-        let (lexeme, after) = rest.split_at(length);
-        if !lexeme.trim().is_empty() {
-            found.push(lexeme);
-        }
-        rest = after;
-    }
-    found
-}
-
-/// Whether `node` is an attribute, outer or inner, other than `doc`,
-/// whose strings are prose.
-fn is_attribute(node: Node<'_>, text: &str) -> bool {
-    let doc = node
-        .named_child(0)
-        .and_then(|attribute| attribute.named_child(0))
-        .is_some_and(|path| text_of(path, text) == "doc");
-    matches!(node.kind(), "attribute_item" | "inner_attribute_item") && !doc
-}
-
-/// Whether `node` is a `mod name { .. }` item.
-fn is_inline_module(node: Node<'_>) -> bool {
-    node.kind() == "mod_item" && node.child_by_field_name("body").is_some()
+    refused.collect()
 }
 
 /// The line and what of each form among `tokens` the check cannot read
-/// through: `include!`, whose file it does not read, and `extern crate`,
-/// which names a crate, or the crate itself, by a name no list holds.
+/// through. That is `include!`, whose file it does not read, and `extern
+/// crate`, which names a crate, or the crate itself, by a name no list
+/// holds. So is a `macro_rules!` among a macro's tokens, which no tree
+/// holds as a definition: the one the tree holds is the single token
+/// `macro_rules!`, judged by `macro_definitions`.
 fn refused_tokens(tokens: &[Token]) -> Vec<(usize, &'static str)> {
     let mut found = Vec::new();
     for (at, token) in tokens.iter().enumerate() {
         let refused = match (token.text.as_str(), text_at(tokens, at + 1)) {
             ("include", "!") => "include!",
             ("extern", "crate") => "extern crate",
+            ("macro_rules", "!") => "a macro_rules! no list admits",
             _ => continue,
         };
         found.push((token.line, refused));
@@ -532,11 +550,12 @@ fn dependencies(texts: &[(String, String)]) -> Vec<String> {
 /// The path from the crate root of the module the file at `path` is:
 /// `code` for `src/code/mod.rs`, `code::parse::rust::marks` for
 /// `src/code/parse/rust/marks.rs`, none for `src/lib.rs`.
-fn module_path(path: &str) -> Vec<&str> {
+fn module_path(path: &str) -> Vec<String> {
     modules_dir(path)
         .strip_prefix("src")
         .unwrap_or_default()
         .split('/')
         .filter(|segment| !segment.is_empty())
+        .map(str::to_owned)
         .collect()
 }

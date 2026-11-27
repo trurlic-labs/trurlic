@@ -1,12 +1,15 @@
 //! The one way into an index: every resolver enters its scopes and
-//! admits its definitions, with their docs, its module files, its file's
-//! doc and its manifest through the scope tree, which charges each what
-//! its entry costs against the room of the file ([`encoding::room_of`]),
-//! so no rule of any resolver can make an index outgrow its file, and
-//! refuses a path past [`MAX_NESTING`] segments.
+//! admits its definitions, with their docs, its module files, its
+//! imports and their steps, its file's doc and its manifest through the
+//! scope tree, which charges each what its entry costs against the room
+//! of the file ([`encoding::room_of`]), so no rule of any resolver can
+//! make an index outgrow its file, and refuses a scope whose path runs
+//! past [`MAX_NESTING`] segments. An import's path is bounded by the room
+//! alone.
 
 use super::encoding::{self, Measure};
 use super::file::{Definition, Doc, FileKind, IndexFault, ModuleFile};
+use super::import::{Import, PathStep};
 use super::manifest::Manifest;
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::Span;
@@ -81,6 +84,21 @@ impl ScopeTree {
 
     pub(in crate::code) fn admit_file_doc(&mut self, doc: &Doc) -> Result<(), IndexFault> {
         self.charge(Measure::file_doc(doc))
+    }
+
+    pub(in crate::code) fn admit_step(&mut self, step: &PathStep) -> Result<(), IndexFault> {
+        self.charge(Measure::step(step))
+    }
+
+    pub(in crate::code) fn admit_macro_module(
+        &mut self,
+        module: Option<ScopeId>,
+    ) -> Result<(), IndexFault> {
+        self.charge(Measure::macro_module(module))
+    }
+
+    pub(in crate::code) fn admit_import(&mut self, import: &Import) -> Result<(), IndexFault> {
+        self.charge(Measure::import(import))
     }
 
     fn charge(&mut self, bytes: usize) -> Result<(), IndexFault> {

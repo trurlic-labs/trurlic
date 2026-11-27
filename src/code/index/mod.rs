@@ -8,6 +8,7 @@
 
 mod encoding;
 mod file;
+mod import;
 mod kinds;
 mod manifest;
 mod scope;
@@ -22,6 +23,7 @@ pub(crate) use file::{
     Definition, FileIndex, FileKind, IndexFault, Indexed, MAX_SOURCE_BYTES, ModuleFile,
 };
 pub(in crate::code) use file::{Doc, LEXICAL_MAX_BYTES, MAX_DOC_BYTES, TREE_SITTER_MAX_BYTES};
+pub(in crate::code) use import::{Before, Binds, Import, ImportKind, PathStep};
 pub(in crate::code) use kinds::What;
 pub(crate) use kinds::{DefinitionKind, Role, Visibility};
 pub(in crate::code) use manifest::{

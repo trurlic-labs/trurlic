@@ -211,7 +211,8 @@ fn every_entry_a_write_makes_reads_back() {
 
 #[test]
 fn bytes_that_break_the_form_are_no_index() {
-    let text = b"//! F.\nmod a { /// B.\nfn b() {} }";
+    let text =
+        b"//! F.\nmod a { /// B.\nfn b() {} }\nuse crate::a::{b as c, *};\npub use self::a::b;\n";
     let indexed = crate::code::testing::index(FileKind::Rust, text).unwrap();
     let bytes = encode(&Ok(indexed));
 
@@ -239,11 +240,84 @@ fn bytes_that_break_the_form_are_no_index() {
     assert_eq!(decoded(&[9]), None);
 }
 
-/// An entry of no scope, definition, module file or manifest, and a file
-/// doc of `code` and `text`.
+#[test]
+fn a_step_reads_back_only_after_a_step_below_it_and_an_import_only_at_a_step() {
+    let decoded = |bytes: &[u8]| decode(bytes, FileKind::Rust, 64);
+    // No scope, definition or module file; one step `a` that starts a
+    // path, one import of it in code; no macro module, doc or manifest.
+    let whole = [0, 0, 0, 0, 1, 0, 0, 1, b'a', 1, 0, 0, 0, 0, 0];
+    let Some(Ok(index)) = decoded(&whole) else {
+        panic!("a step and its import are an index");
+    };
+    assert_eq!(index.rust.imports.len(), 1);
+
+    let mut after_itself = whole;
+    after_itself[5..7].copy_from_slice(&[1, 0]);
+    let mut past_the_steps = whole;
+    past_the_steps[10] = 1;
+    let mut no_kind = whole;
+    no_kind[11] = 4 << 1;
+    for broken in [after_itself, past_the_steps, no_kind] {
+        assert_eq!(decoded(&broken), None, "{broken:?}");
+    }
+    // The same import as a `use` leaf, with what it binds.
+    let used = |binds: u8| [0, 0, 0, 0, 1, 0, 0, 1, b'a', 1, 0, 1 << 1, binds, 0, 0, 0];
+    assert!(matches!(decoded(&used(0)), Some(Ok(_))));
+    assert_eq!(decoded(&used(4)), None);
+    // The file's own module as holding a macro invocation, once and twice.
+    let macros = |modules: &[u8]| {
+        let mut entry = vec![0, 0, 0, 0, 0, 0, u8::try_from(modules.len()).unwrap()];
+        entry.extend(modules);
+        entry.extend([0, 0]);
+        decoded(&entry)
+    };
+    let Some(Ok(index)) = macros(&[0]) else {
+        panic!("a macro module is an index");
+    };
+    assert_eq!(index.rust.macro_modules, [None]);
+    assert_eq!(macros(&[0, 0]), None);
+}
+
+#[test]
+fn a_rust_files_imports_are_indexed_within_its_room_however_many_long_or_deep() {
+    let lines = format!("mod a;\n{}", "use a::b;\n".repeat(100_000));
+    let list = format!("use crate::{{{}}};", "a,".repeat(30_000));
+    let names: String = (0..30_000).map(|n| format!("n{n},")).collect();
+    let reexports = format!("pub use crate::{{{names}}};");
+    let depth = 10_000;
+    let nested = format!(
+        "use crate::{{{}}};",
+        "a, b::{".repeat(depth) + &"}".repeat(depth)
+    );
+    let segments = 5_000;
+    let long = format!("fn f() {{ crate{}(); }}", "::a".repeat(segments));
+    for (text, imports, steps) in [
+        (&lines, 100_000, 200_000),
+        (&list, 30_000, 30_001),
+        (&reexports, 30_000, 30_001),
+        // A leaf `a` in each list but the innermost, which is empty.
+        (&nested, depth, 2 * depth),
+        (&long, 1, segments + 1),
+    ] {
+        let indexed = crate::code::testing::index(FileKind::Rust, text.as_bytes());
+        let Ok(index) = &indexed else {
+            panic!("{indexed:?}");
+        };
+        assert_eq!(
+            (index.rust.imports.len(), index.rust.steps.len()),
+            (imports, steps)
+        );
+        let bytes = encode(&indexed);
+        assert!(bytes.len() <= max_entry_bytes(FileKind::Rust, text.len()));
+        assert_eq!(decode(&bytes, FileKind::Rust, text.len()), Some(indexed));
+    }
+}
+
+/// An entry of no scope, definition, module file, step, import, macro
+/// module or manifest, and a file doc of `code` and `text`.
 fn file_doc_entry(code: u8, text: &[u8]) -> Vec<u8> {
     let length = u16::try_from(text.len()).unwrap();
-    let mut entry = vec![0, 0, 0, 0, code];
+    let mut entry = vec![0, 0, 0, 0, 0, 0, 0, code];
     entry.extend([0x80 | (length & 0x7f) as u8, (length >> 7) as u8]);
     entry.extend(text);
     entry.push(0);
@@ -265,7 +339,7 @@ fn a_doc_reads_back_within_its_bound_and_none_past_it_empty_or_of_no_code() {
     assert_eq!(decoded(&file_doc_entry(1, &past)), None);
     assert_eq!(decoded(&file_doc_entry(1, b"")), None);
     assert_eq!(decoded(&file_doc_entry(3, b"a")), None);
-    assert_eq!(decoded(&[0, 0, 0, 0, 3, 0]), None);
+    assert_eq!(decoded(&[0, 0, 0, 0, 0, 0, 0, 3, 0]), None);
 }
 
 /// An entry of `scopes` scopes of one segment of a one-byte name each,
@@ -281,7 +355,7 @@ fn forged(scopes: usize) -> Vec<u8> {
     for _ in 0..scopes {
         forged.extend([0, 1, 0, 1, b'a']);
     }
-    forged.extend([0, 0, 0, 0]);
+    forged.extend([0, 0, 0, 0, 0, 0, 0]);
     forged
 }
 
@@ -298,7 +372,7 @@ fn malloc(n: usize) -> usize {
 /// 48-byte segment and one of its one-byte name.
 fn resident(scopes: usize) -> usize {
     let count = (usize::BITS - scopes.leading_zeros()).div_ceil(7).max(1) as usize;
-    let entry = 1 + count + 5 * scopes + 4;
+    let entry = 1 + count + 5 * scopes + 7;
     entry + malloc(scopes * 32) + malloc(scopes * 8) + scopes * (64 + 32)
 }
 
@@ -355,6 +429,19 @@ fn measured(index: &FileIndex) -> usize {
             .module_files
             .iter()
             .map(Measure::module_file)
+            .sum::<usize>()
+        + index.rust.steps.iter().map(Measure::step).sum::<usize>()
+        + index
+            .rust
+            .imports
+            .iter()
+            .map(Measure::import)
+            .sum::<usize>()
+        + index
+            .rust
+            .macro_modules
+            .iter()
+            .map(|module| Measure::macro_module(*module))
             .sum::<usize>()
         + index.manifest.as_deref().map_or(0, Measure::manifest)
         + index.doc.as_ref().map_or(0, Measure::file_doc)

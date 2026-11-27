@@ -1697,16 +1697,8 @@ fn is_own_rust(path: &str) -> bool {
 
 #[test]
 fn each_rust_file_of_this_crate_is_at_its_hand_checked_place() {
-    let tmp = TempDir::new().unwrap();
-    let cache = setup_store(tmp.path());
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let store = Store::reached_from(cache.root().to_path_buf(), repository);
-    let mut reads = Reads::of_tree(&store);
-    let anchored = std::iter::empty();
-    let (entries, walked) = read_tree(&store, store.code_root(), Scope::Tree, anchored, &mut reads);
-    // clone: the facts own the walked set, and the test iterates it after.
-    let facts = CodeFacts::new(entries, walked.clone());
-    let tree = CodeTree::of(&facts);
+    let (facts, walked) = super::testing::this_repository();
+    let tree = CodeTree::of(facts);
     let found: BTreeSet<String> = walked
         .iter()
         .filter(|path| is_own_rust(path))

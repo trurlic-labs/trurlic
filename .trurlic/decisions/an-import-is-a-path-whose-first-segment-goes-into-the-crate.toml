@@ -1,0 +1,17 @@
+component = "code"
+choice = "A path is an import when its first segment is crate, $crate, self, super or a module its file declares where it stands; a one-segment path in code, the crate's name and another crate are none"
+reason = "The index reads each file alone, so it keeps only a path it can tell goes into the crate. crate, $crate, self and super do, and so does a name the file declares as a module in the module the path stands in, as Rust reaches a child by its name. A name a use brought into scope is not followed: the use is the import, so use crate::store as s; s::x() imports store once. In code, a word alone names an item in scope, which its use accounts for, and no path; a lone crate or super is no expression or type, and a lone self is the receiver. The crate's own name, written in a binary, test or bench target, reaches the library through cargo, and a path into another crate of the workspace is a crate edge the manifests give: neither is an import. A path in an attribute's string is one, as serde calls what it names; a doc comment and a doc attribute are prose. $crate in a macro_rules! body is an import of the file that defines the macro, where its author wrote the dependency. A strict keyword not written raw is no segment, so use ::std::fs names std::fs; any other word is, a contextual keyword a macro's tokens hold included (m!(crate::gen::f())). A metavariable is a segment that names nothing: crate::$m::f never resolves. In code, as ends a path and the cast's type or trait after it is a path of its own; a list, a glob and an alias are a use tree's alone. A use that opens with a list (use {crate::a::X}) is a use. The name after a lifetime's or a label's quote is no segment, and a raw name is its name whatever the grammar lexes it as."
+alternatives = [
+    "Keep every path and sort them at resolution: rejected because each index would hold every std and dependency path its file names, most of what it would cost",
+    "Read the crate's own name as crate: rejected because a target's root is another crate, whose edge to the library cargo states",
+    "Count $crate at each invocation of the macro: rejected because the index runs no macro and the invocation spells no path",
+]
+status = "proposed"
+origin = "imports between Rust files in the code index"
+created = "2026-11-27T23:27:09.715654771Z"
+anchors = [
+    { file = "src/code/parse/rust/imports.rs", symbol = "Setting::kept" },
+    { file = "src/code/parse/rust/paths.rs", symbol = "Reading::after_segment" },
+    { file = "src/code/parse/rust/paths.rs", symbol = "Reading::is_segment" },
+    { file = "src/code/parse/rust/paths.rs", symbol = "Spelled" },
+]

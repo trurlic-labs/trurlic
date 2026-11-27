@@ -322,7 +322,7 @@ impl CodeFacts {
     }
 
     /// `Test` for a file these facts hold as test code whole.
-    fn file_role(&self, path: &str) -> Role {
+    pub(super) fn file_role(&self, path: &str) -> Role {
         match self.test_files.contains(path) {
             true => Role::Test,
             false => Role::Code,

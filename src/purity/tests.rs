@@ -85,6 +85,10 @@ const SEEDED: &[(&str, &str)] = &[
         "macro_rules! call { ($v:expr, $m:ident) => { $v.$m() }; }\n",
     ),
     (
+        "macro_in_argument",
+        "fn f() { vec![{ macro_rules! m { ($r:tt) => { $r::fs::read(\"x\") } } m!(std) }]; }\n",
+    ),
+    (
         "crate_item",
         "fn f() -> usize { rayon::current_num_threads() }\n",
     ),
@@ -118,10 +122,6 @@ const SEEDED: &[(&str, &str)] = &[
         "macro_argument",
         "fn f() -> String { format!(\"{:?}\", std::fs::read(\"/x\")) }\n",
     ),
-    (
-        "macro_body",
-        "macro_rules! read { () => { std::net::TcpStream::connect(\"x\") }; }\n",
-    ),
     ("dependency", "fn f() { rayon::spawn(|| ()); }\n"),
     ("crate_shell", "fn f() { crate::git::toplevel(); }\n"),
     ("crate_store", "fn f(store: &crate::store::Store) {}\n"),
@@ -138,10 +138,6 @@ const SEEDED: &[(&str, &str)] = &[
     (
         "inline_super_reach",
         "mod inner {\n    fn f() { super::super::super::console::write(); }\n}\n",
-    ),
-    (
-        "dollar_crate",
-        "macro_rules! m { () => { $crate::sources::gather() }; }\n",
     ),
     (
         "attribute_crate",
@@ -178,6 +174,17 @@ const SEEDED: &[(&str, &str)] = &[
         "const X: Option<&str> = option_env!(\"HOME\");\n",
     ),
     ("print", "fn f() { println!(\"x\"); }\n"),
+    ("cast", "fn f(x: u8) -> i32 { x as std::os::raw::c_int }\n"),
+    (
+        "qualified_trait",
+        "fn f<B>(b: &mut B) { <B as std::io::Write>::flush(b); }\n",
+    ),
+    ("braced_use", "use {std::fs};\n"),
+    ("lifetime", "fn f<'a>(x: &'a ::std::fs::File) {}\n"),
+    (
+        "label",
+        "fn f() { 'outer: loop { break 'outer ::std::fs::read(\"x\"); } }\n",
+    ),
     ("raw_root", "fn f() { let _ = r#std::fs::read(\"/x\"); }\n"),
     (
         "tool_attribute",
@@ -255,10 +262,6 @@ const ABOVE: &[(&str, &str)] = &[
     ),
     ("self_alias", "use crate::index::{self as above};\n"),
     ("super_alias", "use super::super as above;\n"),
-    (
-        "dollar_crate",
-        "macro_rules! m { () => { $crate::index::Root }; }\n",
-    ),
     ("sibling", "fn f() { crate::other::g(); }\n"),
     (
         "inline_supers",
@@ -285,6 +288,12 @@ const ABOVE: &[(&str, &str)] = &[
         "#[derive(Deserialize)]\n#[serde(try_from = \"crate:\\\n    :other::Raw\")]\nstruct S;\n",
     ),
     ("tuple_field", "struct S(pub (crate::other::Raw));\n"),
+    ("cast", "fn f(x: u8) -> u64 { x as crate::other::Raw }\n"),
+    (
+        "qualified_trait",
+        "fn f() { <u8 as crate::other::Tr>::g(); }\n",
+    ),
+    ("braced_use", "use {crate::other::g};\n"),
 ];
 
 #[test]
@@ -322,14 +331,56 @@ fn each_path_above_a_part_is_found_however_it_is_spelled() {
     );
 }
 
+/// Each form a re-export of an item from outside its module can take, one
+/// per file of the module `index`, beside a file whose re-exports stay
+/// inside it.
+const REEXPORTS: &[(&str, &str)] = &[
+    (
+        "inside",
+        "pub use self::inner::X;\nuse crate::other::g;\nmod inner { pub struct X; }\npub(crate) use super::inside::inner::X as Y;\n",
+    ),
+    ("plain", "pub use crate::other::g;\n"),
+    ("restricted", "pub(crate) use crate::other::g;\n"),
+    ("braced", "pub(crate) use {crate::other::g};\n"),
+    ("in_macro", "keep! { pub(crate) use crate::other::g; }\n"),
+    (
+        "in_path",
+        "pub(in crate::index) use super::super::other::g as h;\n",
+    ),
+];
+
+#[test]
+fn each_re_export_from_outside_a_module_is_found_however_it_is_spelled() {
+    let mut files = case_files("src/index", "", REEXPORTS);
+    files.extend(
+        [
+            ("Cargo.toml", "[package]\n"),
+            ("src/lib.rs", "mod index;\nmod other;\n"),
+            ("src/other.rs", "pub fn g() {}\n"),
+        ]
+        .map(|(path, text)| (path.to_owned(), text.to_owned())),
+    );
+    let tmp = seeded(&files);
+
+    let found = Crate::read(tmp.path()).re_exports_beyond("index");
+
+    let expected = expected("src/index", REEXPORTS, "inside");
+    assert_eq!(
+        faulted(&found),
+        expected.iter().map(String::as_str).collect(),
+        "{found:#?}"
+    );
+}
+
 /// Each form the reading cannot follow, one per file of the module
-/// `index`, and a file that holds none, its macro's textual scope holding
-/// only a test module.
+/// `index`, and a file that holds none but a macro in test code. A macro a
+/// metavariable makes a path in is refused for its definition.
 const UNREADABLE: &[(&str, &str)] = &[
     (
         "clean",
-        "mod before {}\nmacro_rules! m { () => {} }\n#[cfg(test)]\nmod tests {}\n#[error(\"a\\nb \\\"{0}\\\"\")]\nstruct S;\nfn macro_use() {}\n",
+        "mod before {}\n#[cfg(test)]\nmod tests {\n    macro_rules! m { () => {} }\n}\n#[error(\"a\\nb \\\"{0}\\\"\")]\nstruct S;\nfn macro_use() {}\n",
     ),
+    ("macro", "macro_rules! m { () => {} }\n"),
     (
         "path_attribute",
         "#[path = \"../../outside.rs\"]\nmod outside;\n",
@@ -355,10 +406,6 @@ const UNREADABLE: &[(&str, &str)] = &[
         "extern crate self as x;\nfn f() { x::other::g(); }\n",
     ),
     (
-        "macro_scope",
-        "macro_rules! m { () => { $crate::other::g() }; }\nmod inner {\n    fn f() { m!(); }\n}\n",
-    ),
-    (
         "macro_module",
         "macro_rules! ship { () => { mod shipped; }; }\n",
     ),
@@ -376,6 +423,38 @@ const UNREADABLE: &[(&str, &str)] = &[
     ),
     ("unparsed", "fn f() { crate::other::g() @@ }\n"),
     (
+        "metavariable_path",
+        "macro_rules! m { ($m:ident) => { crate::$m::g() }; }\n",
+    ),
+    (
+        "metavariable_root",
+        "macro_rules! reach { ($root:tt) => { $root::other::g() }; }\nfn f() { reach!(crate); }\n",
+    ),
+    (
+        "metavariable_tokens",
+        "macro_rules! paste { ($a:tt $b:tt) => { $a $b other::g() }; }\nfn f() { paste!(crate ::); }\n",
+    ),
+    (
+        "metavariable_list",
+        "macro_rules! import { ($m:ident) => { use crate::{$m}; }; }\nimport!(other);\n",
+    ),
+    (
+        "metavariable_attribute",
+        "macro_rules! with { ($s:literal) => { #[serde(deserialize_with = $s)] struct S; }; }\nwith!(\"crate::other::g\");\n",
+    ),
+    (
+        "macro_in_vec",
+        "fn f() { vec![{ macro_rules! m { ($r:tt) => { $r::other::g() } } m!(crate) }]; }\n",
+    ),
+    (
+        "macro_in_assert",
+        "fn f() { assert!({ macro_rules! m { ($r:tt) => { $r::other::g() } } m!(crate); true }); }\n",
+    ),
+    (
+        "macro_in_format",
+        "fn f() -> String { format!(\"{}\", { macro_rules! m { ($r:tt) => { $r::other::g() } } m!(crate) }) }\n",
+    ),
+    (
         "attribute_escape",
         "#[derive(Deserialize)]\n#[serde(with = \"crate\\x3a\\x3aother\")]\nstruct S;\n",
     ),
@@ -387,8 +466,12 @@ fn each_form_the_reading_cannot_follow_is_refused_by_every_check() {
     files.extend(
         [
             ("Cargo.toml", "[package]\n"),
-            ("src/lib.rs", "mod index;\nmod other;\n"),
+            ("src/lib.rs", "mod index;\nmod other;\nmod console;\n"),
             ("src/other.rs", "pub fn g() {}\n"),
+            (
+                "src/console.rs",
+                "macro_rules! out { () => {} }\nmod after {}\nmacro_rules! diag { () => {} }\n",
+            ),
             ("src/index/test_file_shipped/hidden.rs", "use std::fs;\n"),
             ("src/index/nested_module/twin.rs", ""),
             ("src/index/nested_module/twin/leak.rs", "use std::fs;\n"),
@@ -404,7 +487,9 @@ fn each_form_the_reading_cannot_follow_is_refused_by_every_check() {
         crates: &[],
         crate_items: &[],
     };
-    let expected = expected("src/index", UNREADABLE, "clean");
+    // The listed macros, `out!` for the module in its textual scope.
+    let mut expected = expected("src/index", UNREADABLE, "clean");
+    expected.insert("src/console.rs".to_owned());
 
     for found in [
         source.faults("other", &nothing),
@@ -414,6 +499,14 @@ fn each_form_the_reading_cannot_follow_is_refused_by_every_check() {
             faulted(&found),
             expected.iter().map(String::as_str).collect(),
             "{found:#?}"
+        );
+        let console = found
+            .iter()
+            .filter(|fault| fault.starts_with("src/console.rs"));
+        let console: Vec<&String> = console.collect();
+        assert_eq!(
+            console,
+            ["src/console.rs:1: a module in the textual scope of a macro_rules!"]
         );
     }
 }

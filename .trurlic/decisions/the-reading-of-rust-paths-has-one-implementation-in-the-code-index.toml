@@ -1,0 +1,26 @@
+component = "code"
+choice = "The reading of Rust paths has one implementation, in the code index; the boundary tests read through it, and purity keeps the judgement and the reading of files"
+reason = "Two readers of one grammar drift: a form one reads and the other misses would hold a module to its arrow while the index draws another edge. So Reading in parse/rust reads every token of a file, macro arguments and bodies included, each in the inline module it stands in. It reads the paths of those tokens, the entries of a use list sharing the steps of its prefix, and the paths a string of an attribute other than doc spells. It is shipped code under the index's rules: no I/O, linear work from explicit stacks, nothing cached. Each consumer judges what it reads. The index keeps a path that goes into the crate, with the role its walk of the items gives the bytes. crate::purity drops the tokens and paths its own exact test rule holds, and judges the rest against the allow lists and the module map. It also refuses each form no reading follows, read from the tree or its tokens, a macro_rules! definition its list does not admit among them, as its judgement of what hides code from it."
+alternatives = [
+    "A second reader of paths in the index beside purity's: rejected by the owner, as two readers of one grammar disagree unseen",
+    "The reader applies one test rule for both: rejected because the index's rule is broader (any attribute path ending in test), and purity must not let such an item hide code",
+    "Move purity's refusals of forms into the reader: rejected because the index reads none of them, so they would be shipped code no shipped code reads",
+]
+status = "proposed"
+origin = "imports between Rust files in the code index"
+created = "2026-11-27T23:27:09.715654771Z"
+anchors = [
+    { file = "src/code/parse/rust/paths.rs", symbol = "Reading::paths" },
+    { file = "src/code/parse/rust/reading.rs", symbol = "Reading::of" },
+    { file = "src/purity/read.rs", symbol = "marks" },
+    { file = "src/purity/read.rs", symbol = "viewed" },
+]
+
+[accepted_text]
+choice = "The reading of Rust paths has one implementation, in the code index; the boundary tests read through it, and purity keeps the judgement and the reading of files"
+reason = "Two readers of one grammar drift: a form one reads and the other misses would hold a module to its arrow while the index draws another edge. So Reading in parse/rust reads every token of a file, macro arguments and bodies included, each in the inline module it stands in. It reads the paths of those tokens, the entries of a use list sharing the steps of its prefix, and the paths a string of an attribute other than doc spells. It is shipped code under the index's rules: no I/O, linear work from explicit stacks, nothing cached. Each consumer judges what it reads. The index keeps a path that goes into the crate, with the role its walk of the items gives the bytes. crate::purity drops the tokens and paths its own exact test rule holds, and judges the rest against the allow lists and the module map. It also refuses, from the tree, each form no reading follows, as its judgement of what hides code from it."
+alternatives = [
+    "A second reader of paths in the index beside purity's: rejected by the owner, as two readers of one grammar disagree unseen",
+    "The reader applies one test rule for both: rejected because the index's rule is broader (any attribute path ending in test), and purity must not let such an item hide code",
+    "Move purity's refusals of forms into the reader: rejected because the index reads none of them, so they would be shipped code no shipped code reads",
+]

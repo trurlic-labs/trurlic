@@ -69,6 +69,11 @@ pub(crate) enum Unresolved {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ModulePath(Option<usize>);
 
+impl ModulePath {
+    /// The root module's path.
+    pub(super) const ROOT: Self = Self(None);
+}
+
 /// Every module path the walk reaches, each once, as its parent's and its
 /// last segment: two paths spelled alike are one id.
 #[derive(Debug, Default)]
@@ -80,13 +85,19 @@ pub(super) struct ModulePaths<'i> {
 
 impl<'i> ModulePaths<'i> {
     /// `parent` and `segment` below it.
-    fn child(&mut self, parent: ModulePath, segment: &'i str) -> ModulePath {
+    pub(super) fn child(&mut self, parent: ModulePath, segment: &'i str) -> ModulePath {
         let next = self.paths.len();
         let id = *self.ids.entry((parent, segment)).or_insert(next);
         if id == next {
             self.paths.push((parent, segment));
         }
         ModulePath(Some(id))
+    }
+
+    /// `segment` below `parent`, when a path of the tree is.
+    pub(super) fn find(&self, parent: ModulePath, segment: &'i str) -> Option<ModulePath> {
+        let id = self.ids.get(&(parent, segment))?;
+        Some(ModulePath(Some(*id)))
     }
 
     /// The path above `path`; `None` for the root module's.
@@ -171,7 +182,7 @@ impl<'i> Reach<'i> for ReachedAt<'i> {
         Self::Module {
             crate_dir: crates.crate_of(root),
             root: parent(root),
-            path: ModulePath(None),
+            path: ModulePath::ROOT,
         }
     }
 

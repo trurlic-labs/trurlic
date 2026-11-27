@@ -1,12 +1,13 @@
 //! A file's index: the scopes of its paths, the definitions it holds,
 //! each with its scope, what it is, its span and span hash, for Rust the
-//! module files a second step follows, and for a Cargo manifest what it
-//! states of its crate. An index is a function of the file's kind and
-//! bytes alone, so a cache keyed by the two holds it whatever path or
-//! tree the bytes are under.
+//! module files and the imports a second step follows, and for a Cargo
+//! manifest what it states of its crate. An index is a function of the
+//! file's kind and bytes alone, so a cache keyed by the two holds it
+//! whatever path or tree the bytes are under.
 
 use std::fmt;
 
+use super::import::{Import, PathStep};
 use super::kinds::{DefinitionKind, Role, Visibility};
 use super::manifest::Manifest;
 use super::scope::{MAX_NESTING, Scope, ScopeId};
@@ -215,18 +216,30 @@ impl FileIndex {
         doc: None,
         rust: RustFacts {
             module_files: Vec::new(),
+            steps: Vec::new(),
+            imports: Vec::new(),
+            macro_modules: Vec::new(),
         },
         manifest: None,
     };
 }
 
-/// What a Rust file holds besides its definitions: the modules declared
-/// to be in files of their own, which the second step over its crate
-/// follows.
+/// What a Rust file holds besides its definitions, which the second step
+/// over its crate follows: the modules declared to be in files of their
+/// own, and the paths it names into its crate.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(in crate::code) struct RustFacts {
     /// In the order of the file.
     pub(in crate::code) module_files: Vec<ModuleFile>,
+    /// The steps of the imports' paths, each after the step it comes
+    /// after.
+    pub(in crate::code) steps: Vec<PathStep>,
+    /// In the order of the file.
+    pub(in crate::code) imports: Vec<Import>,
+    /// Each module, by its inline module's scope or `None` for the file's
+    /// own, that holds a macro invocation as an item, which may define
+    /// any name in it: each once, in order.
+    pub(in crate::code) macro_modules: Vec<Option<ScopeId>>,
 }
 
 /// Why a file's bytes give no index.

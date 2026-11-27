@@ -1,6 +1,6 @@
 component = "code"
-choice = "A file's index holds its scopes, its definitions, each with its doc, and its own doc for every kind, and Rust's module files apart in RustFacts, empty for every other kind"
-reason = "The forward walk of module files reads a fact only a Rust file states, and a language the general resolver reads has none of it; held beside the scopes and definitions as a field of every index, it would read as a fact of every language. Held in RustFacts, it is Rust's by its type, the role walk and the resolution read index.rust, and another language's index leaves them empty, which costs one zero count in its cache entry. A doc is every language's, a Python docstring or a JSDoc comment, though only Rust's are read, so a definition's doc and the file's are fields of every index, None where no doc is read, at the cost of a code in a definition's marks byte and one byte an entry. A per-language fact type would be an abstraction with one implementation, since no other language has a second step over its files but its test places, which are data in its row."
+choice = "A file's index holds its scopes, its definitions, each with its doc, and its own doc for every kind, and Rust's module files and imports apart in RustFacts, empty for every other kind"
+reason = "The forward walk of module files and the resolution of imports read facts only a Rust file states, and a language the general resolver reads has none of them; held beside the scopes and definitions as a field of every index, it would read as a fact of every language. Held in RustFacts, it is Rust's by its type, the role walk and the resolution read index.rust, and another language's index leaves them empty, which costs one zero count in its cache entry. A doc is every language's, a Python docstring or a JSDoc comment, though only Rust's are read, so a definition's doc and the file's are fields of every index, None where no doc is read, at the cost of a code in a definition's marks byte and one byte an entry. A per-language fact type would be an abstraction with one implementation, since no other language has a second step over its files but its test places, which are data in its row."
 alternatives = [
     "Option of RustFacts: rejected because every reader would unwrap an option whose None and empty mean the same",
     "A trait or enum of per-language facts: rejected because Rust is the one language with such facts, and an abstraction with one implementation is none",
@@ -10,6 +10,7 @@ status = "proposed"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
+    { file = "src/code/facts/imports.rs", symbol = "file_edges" },
     { file = "src/code/index/file.rs", symbol = "Definition" },
     { file = "src/code/index/file.rs", symbol = "FileIndex" },
     { file = "src/code/index/file.rs", symbol = "RustFacts" },

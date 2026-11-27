@@ -14,7 +14,7 @@ anchors = [
     { file = "benches/corpus.rs", symbol = "bench_code_index" },
     { file = "benches/corpus.rs", symbol = "checked_repository" },
     { file = "benches/corpus.rs", symbol = "git" },
-    { file = "src/lib.rs", symbol = "bench::checked_findings" },
+    { file = "src/bench.rs", symbol = "checked_findings" },
 ]
 depends_on = [
     "benches-and-property-tests-draw-from-a-seeded-corpus",
