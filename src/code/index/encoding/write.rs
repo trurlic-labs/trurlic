@@ -9,7 +9,9 @@ use crate::code::index::scope::{Scope, ScopeId};
 use crate::code::index::span::{Span, SpanHash};
 use crate::code::index::symbol::Segment;
 
-use super::codes::{dependency_kind_code, doc_code, kind_code, role_code, visibility_code};
+use super::codes::{
+    dependency_kind_code, doc_code, kind_code, role_code, self_type_code, visibility_code,
+};
 use super::room::{DEPTH_BYTES, block};
 
 /// The bytes of `indexed`.
@@ -314,7 +316,8 @@ impl<S: Sink> Writer<S> {
         self.byte(
             role_code(definition.role)
                 | visibility_code(definition.visibility) << 1
-                | doc_code(doc) << 4,
+                | doc_code(doc) << 4
+                | self_type_code(definition.self_type) << 6,
         );
         match previous == Some(definition.span) {
             true => self.byte(1),

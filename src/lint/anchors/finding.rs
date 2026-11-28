@@ -125,6 +125,15 @@ pub(crate) enum Checked {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Unasked;
 
+/// What a reader of one file's anchors, which runs no git either, makes of
+/// a missing anchor: as `status` does on a decision ever accepted, and
+/// planned, as `check` says, on one never accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InTree {
+    Unasked(Unasked),
+    Planned,
+}
+
 /// A [`Kind`] without its data, in the order findings sort by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum KindName {
@@ -155,6 +164,15 @@ impl KindName {
         Self::Ambiguous,
         Self::Unverified,
         Self::Weak,
+    ];
+
+    /// The kinds of a finding [`in_tree`](super::in_tree) gives.
+    pub(crate) const IN_TREE: [Self; 5] = [
+        Self::Unresolved,
+        Self::Malformed,
+        Self::Ambiguous,
+        Self::Unverified,
+        Self::Planned,
     ];
 
     pub(crate) const fn as_str(self) -> &'static str {
@@ -217,6 +235,22 @@ impl Verdict for Unasked {
 
     fn describe(&self, cause: &Missing, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{cause} in this tree")
+    }
+}
+
+impl Verdict for InTree {
+    fn name(&self) -> KindName {
+        match self {
+            Self::Unasked(unasked) => unasked.name(),
+            Self::Planned => KindName::Planned,
+        }
+    }
+
+    fn describe(&self, cause: &Missing, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unasked(unasked) => unasked.describe(cause, f),
+            Self::Planned => Checked::Planned.describe(cause, f),
+        }
     }
 }
 

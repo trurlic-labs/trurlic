@@ -219,6 +219,8 @@ Before writing a line, the agent pulls the component's brief and generates code 
 trurlic status              # the graph at a glance: counts, issues, history, components, lint
 trurlic status --section anchors  # the anchors that do not plainly resolve in this tree
 trurlic map --json          # the code tree a level at a time: crates, then any node's address
+trurlic map --json --frame file:src/lib.rs  # one file: definitions, decisions by line range
+trurlic map --json --search store           # nodes and definitions by name or path
 trurlic apply batch.json    # a batch of ops, the JSON the apply tool takes, all or none
 trurlic check               # every issue and anchor finding; fails on an issue, a stale, malformed or ambiguous anchor
 trurlic fmt                 # rewrite the files that are not in canonical form

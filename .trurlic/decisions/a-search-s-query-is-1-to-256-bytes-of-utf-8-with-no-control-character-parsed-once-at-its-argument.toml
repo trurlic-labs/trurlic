@@ -1,0 +1,16 @@
+component = "sources"
+choice = "A search's query is 1 to 256 bytes of UTF-8 with no control character, parsed once by Query::parse in its argument's kind, the one site that refuses it"
+reason = "The query argument's kind, QueryText, parses through Query::parse and maps its QueryFault to the invalid_argument refusal that names query, with one message. Its schema states that parse for a reader: the lengths read MIN_QUERY_BYTES and MAX_QUERY_BYTES, and the pattern excludes C0, DEL and C1, the controls the parse refuses. A schema's length counts characters where the parse counts bytes, so it states the bound exactly for ASCII alone, and the parse stays the boundary. sources owns the type, as tools names sources and code names neither; the search in code takes any text, so it never re-checks one."
+alternatives = [
+    "A text argument checked again in the handler: rejected because two sites would refuse one fault with two messages",
+    "The query type in code: rejected because tools may not name code, so the argument's kind could not build it",
+    "Bounds in characters: rejected because a name's prefix is matched in bytes, and a bound in characters lets a query of four-byte characters hold four times the bytes",
+]
+status = "proposed"
+origin = "the map command: a file's frame and search"
+created = "2026-11-28T05:37:20.642346478Z"
+anchors = [
+    { file = "src/sources/search.rs", symbol = "MAX_QUERY_BYTES" },
+    { file = "src/sources/search.rs", symbol = "Query::parse" },
+    { file = "src/tools/spec/kinds.rs", symbol = "QueryText" },
+]

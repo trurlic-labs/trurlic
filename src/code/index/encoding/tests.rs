@@ -1,6 +1,8 @@
 use super::room::COUNTS_BYTES;
 use super::{Measure, decode, encode, max_entry_bytes};
-use crate::code::index::{FileIndex, FileKind, IndexFault, MAX_DOC_BYTES};
+use crate::code::index::{
+    DefinitionKind, FileIndex, FileKind, IndexFault, MAX_DOC_BYTES, SelfType,
+};
 
 /// Every file of the fixture corpus and of `src/code`, with its kind
 /// and bytes.
@@ -517,5 +519,70 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
             text.len(),
             bytes.len()
         );
+    }
+}
+
+#[test]
+fn a_trait_impl_reads_back_how_it_writes_its_self_type() {
+    let text = b"impl Display for T {}\nimpl From<T> for std::io::Error {}\n";
+    let indexed = crate::code::testing::index(FileKind::Rust, text);
+
+    let decoded = decode(&encode(&indexed), FileKind::Rust, text.len()).unwrap();
+
+    let written: Vec<Option<SelfType>> = decoded
+        .unwrap()
+        .definitions
+        .iter()
+        .map(|definition| definition.self_type)
+        .collect();
+    assert_eq!(written, [Some(SelfType::Bare), Some(SelfType::Qualified)]);
+}
+
+/// The entry of `text`, a Rust file of one definition, with its marks'
+/// self type bits set to `code`.
+fn with_self_type_code(text: &[u8], code: u8) -> Vec<u8> {
+    let mut index = crate::code::testing::index(FileKind::Rust, text).unwrap();
+    let bare = encode(&Ok(index.clone()));
+    for definition in &mut index.definitions {
+        definition.self_type = match definition.self_type {
+            Some(_) => None,
+            None => Some(SelfType::Qualified),
+        };
+    }
+    let flipped = encode(&Ok(index));
+    let at = (0..bare.len())
+        .find(|&at| bare.get(at) != flipped.get(at))
+        .unwrap();
+    let mut bytes = bare;
+    bytes[at] = bytes[at] & 0b0011_1111 | code << 6;
+    bytes
+}
+
+#[test]
+fn a_self_type_code_past_the_set_or_on_a_kind_with_none_is_no_index() {
+    let decoded = |text: &[u8], code: u8| {
+        decode(&with_self_type_code(text, code), FileKind::Rust, text.len())
+    };
+    let trait_impl: &[u8] = b"impl Display for T {}\n";
+    let function: &[u8] = b"fn f() {}\n";
+    let kinds = |text: &[u8]| {
+        let index = crate::code::testing::index(FileKind::Rust, text).unwrap();
+        index
+            .definitions
+            .iter()
+            .map(|definition| definition.kind)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(kinds(trait_impl), [DefinitionKind::Impl]);
+    assert_eq!(kinds(function), [DefinitionKind::Function]);
+
+    assert!(decoded(trait_impl, 1).is_some());
+    for (text, code) in [
+        (trait_impl, 3),
+        (trait_impl, 0),
+        (function, 1),
+        (function, 2),
+    ] {
+        assert_eq!(decoded(text, code), None, "{code}");
     }
 }

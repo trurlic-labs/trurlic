@@ -15,7 +15,7 @@ pub(crate) use check::check;
 pub(crate) use fmt::fmt;
 pub(crate) use init::init;
 pub(crate) use install::install;
-pub(crate) use map::{MapFlags, map};
+pub(crate) use map::{MapUnit, map};
 pub(crate) use migrate::migrate;
 pub(crate) use query::query_file;
 pub(crate) use serve::serve;

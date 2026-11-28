@@ -1,0 +1,15 @@
+component = "code"
+choice = "Search over node paths and definition paths ranks an exact name first, then a prefix, then a substring, the shorter path first, ties by path, in one implementation, paged"
+reason = "A text looked for most likely names a thing whole, else starts the name of one, else stands somewhere in its path. Within a class, the shorter path is the nearer match, and the path itself breaks a tie, so every page reads in one order. trurlic map --json --search <query> gives the hits, so the view ranks nothing. The rank is one function in the code index, CodeTree::rank, which the order of every page follows."
+alternatives = [
+    "A fuzzy score over subsequences: rejected because its order is a number no reader can predict, and two scores tie in ways a rule must break anyway",
+    "Rank by the path's depth: rejected because a module path and a file path count depth in different segments",
+]
+status = "accepted"
+origin = "the map command: a file's frame and search"
+created = "2026-11-28T02:57:55.156109733Z"
+anchors = [
+    { file = "src/code/facts/search.rs", symbol = "CodeTree::rank" },
+    { file = "src/code/facts/search.rs", symbol = "CodeTree::search" },
+    { file = "src/tools/map/search.rs", symbol = "SEARCH" },
+]

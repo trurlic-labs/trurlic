@@ -465,6 +465,7 @@ mod tests {
                 format!("{FUNCTION} (#set! kind \"klass\"))"),
                 bad(0, "kind"),
             ),
+            (format!("{FUNCTION} (#set! kind \"impl\"))"), bad(0, "kind")),
             (
                 format!("{FUNCTION} {kind} (#set! container \"no\"))"),
                 bad(0, "container"),

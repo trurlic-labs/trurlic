@@ -28,14 +28,16 @@ pub(crate) use dispatch::{BOUNDS, INDEX_FORMAT, index};
 #[cfg(test)]
 pub(crate) use facts::Target;
 pub(crate) use facts::{
-    Code, CodeFacts, CodeTree, Covered, Crate, Edge, Endpoint, Entry, FileFault, Level, MANIFEST,
-    Module, Node, ReadFault, Resolution, Unresolved,
+    Code, CodeFacts, CodeTree, Covered, Crate, Edge, Endpoint, Entry, FileDefinition, FileFault,
+    Found, Hit, Impls, Level, MANIFEST, Match, Module, Node, ReadFault, Resolution, SymbolAnchor,
+    Unresolved,
 };
 #[cfg(test)]
 pub(crate) use index::SpanHash;
 pub(crate) use index::{
-    DefinitionKind, DependencyKind, FileKind, HASH_SCHEME, Indexed, MAX_SOURCE_BYTES,
-    decode as decode_index, encode as encode_index, line_count, max_entry_bytes,
+    DefinitionKind, DependencyKind, Doc, FileKind, HASH_SCHEME, IndexFault, Indexed,
+    MAX_SOURCE_BYTES, Role, Visibility, decode as decode_index, encode as encode_index, line_count,
+    max_entry_bytes,
 };
 pub(crate) use parse::{
     BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, grammar_identity_of,

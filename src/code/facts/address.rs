@@ -116,7 +116,7 @@ impl<'i> CodeTree<'i> {
 }
 
 /// `dir` as an address spells it.
-fn spelled(dir: &str) -> &str {
+pub(super) fn spelled(dir: &str) -> &str {
     match dir {
         "" => CODE_ROOT,
         dir => dir,

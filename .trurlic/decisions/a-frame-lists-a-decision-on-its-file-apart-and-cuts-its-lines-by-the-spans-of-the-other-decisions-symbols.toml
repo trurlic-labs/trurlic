@@ -1,0 +1,18 @@
+component = "code"
+choice = "A frame lists a decision anchored with no symbol on its file, or a directory above it, on the file and in no range; the other decisions cut its lines into maximal ranges by their symbols' spans"
+reason = "A decision on the file or a directory above it covers every line, so it is listed once on the file, and no range repeats it, whatever its symbol anchors cover. The ranges cover lines 1 to the file's line count with no gap or overlap, each with one set of the other decisions, and a range ends exactly where a span of one of them starts or ends. Two spans of one decision that meet, as cfg twins can, are one range. Only a resolved symbol covers lines: every span of the definitions of its one path. An ambiguous symbol's candidate spans cover nothing, as no reader can tell which one the decision means. A symbol anchor on the file that resolves to no span is listed with the finding lint's judge gives it with git not asked. So a missing symbol is unresolved on a decision ever accepted, as status names it, and planned on one never accepted, as check names it. A file read with no index keeps its line count and one range of no decision; one never read has none. sources reads the frame from the walk of the calling tree, as a level is read, and runs no git."
+alternatives = [
+    "A file or directory anchor as a range over the whole file: rejected because every range would repeat its decision, and a page of ranges would pay for it once per range",
+    "Cover an ambiguous symbol's candidates: rejected because a line would show a decision that may not be on it",
+    "Leave out a missing symbol of a decision never accepted, as status does: rejected because the frame would hide an anchor of the file from the view",
+    "Call every missing symbol unresolved: rejected because a view could not tell a planned anchor from a stale one",
+]
+status = "proposed"
+origin = "the map command: a file's frame and search"
+created = "2026-11-28T04:23:14.932032285Z"
+anchors = [
+    { file = "src/code/facts/coverage.rs", symbol = "CodeTree::coverage" },
+    { file = "src/code/facts/coverage.rs", symbol = "ranges" },
+    { file = "src/lint/anchors/judge.rs", symbol = "in_tree" },
+    { file = "src/sources/frame.rs", symbol = "frame_in" },
+]

@@ -22,7 +22,7 @@ use super::parse::{
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 24;
+pub(crate) const INDEX_FORMAT: u32 = 25;
 
 /// Every bound an index is built within, by name and value: in a cache
 /// key, so an index built under other bounds is never read as one of
@@ -148,7 +148,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 24] = [
+    const FINGERPRINTS: [(u32, &str); 25] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -244,6 +244,10 @@ mod tests {
         (
             24,
             "b331939c6df850e2f60124b8fb1b4fa890b8caa66cf6a557e308a653ca12b26f",
+        ),
+        (
+            25,
+            "0d5d2b7fa95c07673a84c77403d46e52648eaffc569880f0641d28149e4149c2",
         ),
     ];
 

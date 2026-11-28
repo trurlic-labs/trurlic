@@ -196,11 +196,8 @@ impl<'f> Sweep<'f> {
                 name: one,
             });
         }
-        let what = What {
-            kind,
-            role: name.role(),
-            visibility: visibility.or(name.within).or(definer.visibility),
-        };
+        let visibility = visibility.or(name.within).or(definer.visibility);
+        let what = What::new(kind, name.role(), visibility);
         self.placed.push(Placed {
             scope,
             span: site.span,

@@ -86,6 +86,17 @@ impl ChildKind {
             Self::File => "file",
         }
     }
+
+    /// The kind of `node`.
+    pub(super) const fn of(node: Node<'_>) -> Self {
+        match node {
+            Node::Crate(Some(_)) => Self::Crate,
+            Node::Crate(None) => Self::OutsideCrates,
+            Node::Module { .. } => Self::Module,
+            Node::Directory { .. } => Self::Directory,
+            Node::File { .. } => Self::File,
+        }
+    }
 }
 
 /// What a crate's manifest states.
@@ -224,12 +235,23 @@ impl FilePlace {
     }
 }
 
-/// The first doc paragraph the index holds of a node ([`CodeTree::doc`]).
+/// The first doc paragraph the index holds of a node ([`CodeTree::doc`])
+/// or a definition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Doc {
     pub(crate) text: String,
     /// Whether the paragraph ran past the bytes the index holds of it.
     pub(crate) cut: bool,
+}
+
+impl Doc {
+    /// `doc`, owned.
+    pub(super) fn of(doc: &code::Doc) -> Self {
+        Self {
+            text: doc.text().to_owned(),
+            cut: doc.is_cut(),
+        }
+    }
 }
 
 /// The imports of the files below a node that resolve to a file: those
@@ -376,35 +398,29 @@ pub(crate) fn level_in<'d, 'a>(
 /// `node` as a child of its level, `imports` its own, with nothing below
 /// it counted.
 fn child<'i>(tree: &CodeTree<'i>, node: Node<'i>, imports: Imports) -> Child {
-    let doc = || {
-        tree.doc(node).map(|doc| Doc {
-            text: doc.text().to_owned(),
-            cut: doc.is_cut(),
-        })
-    };
-    let (kind, crate_facts, module, file) = match node {
-        Node::Crate(Some(dir)) => (ChildKind::Crate, Some(crate_facts(tree, dir)), None, None),
-        Node::Crate(None) => (ChildKind::OutsideCrates, None, None, None),
+    let doc = || tree.doc(node).map(Doc::of);
+    let (crate_facts, module, file) = match node {
+        Node::Crate(Some(dir)) => (Some(crate_facts(tree, dir)), None, None),
+        Node::Crate(None) | Node::Directory { .. } => (None, None, None),
         Node::Module { .. } => {
             let module = ModuleFacts {
                 doc: doc(),
                 imports,
             };
-            (ChildKind::Module, None, Some(module), None)
+            (None, Some(module), None)
         }
-        Node::Directory { .. } => (ChildKind::Directory, None, None, None),
         Node::File { place, .. } => {
             let file = FileFacts {
                 place: FilePlace::of(place.module),
                 doc: doc(),
                 imports,
             };
-            (ChildKind::File, None, None, Some(file))
+            (None, None, Some(file))
         }
     };
     Child {
         address: tree.address(node),
-        kind,
+        kind: ChildKind::of(node),
         name: tree.name(node).to_owned(),
         lines: Lines::default(),
         definitions: Definitions::default(),

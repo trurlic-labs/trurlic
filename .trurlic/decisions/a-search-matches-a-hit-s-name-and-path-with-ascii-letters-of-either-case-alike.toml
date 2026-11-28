@@ -1,0 +1,15 @@
+component = "code"
+choice = "A search matches a hit's name, a node's as a level names it or a definition's last segment, and its path, with ASCII letters of either case alike; decisions are not searched"
+reason = "A hit's path is a crate's, a directory's or a file's path, a root module's root directory, any other module's segments joined by ::, or a definition's segments joined by ::, as an anchor's symbol spells them. What lies outside every crate is named outside_crates and has no path, so its name alone matches. ASCII case folding is the leanest rule that holds for every name. After the rank's class, length and path, a node comes before a definition, nodes order by address and definitions by file, lines and kind, so the order is total. Each definition is a hit of its own, cfg twins two hits of one path. A search reads the code tree, never the graph."
+alternatives = [
+    "Unicode case folding: rejected because a folded name can change length, so a prefix of bytes would stop being a prefix of the name",
+    "One hit for the definitions of one path: rejected because cfg twins sit at two places a view opens apart",
+]
+status = "proposed"
+origin = "the map command: a file's frame and search"
+created = "2026-11-28T04:23:14.932032285Z"
+anchors = [
+    { file = "src/code/facts/search.rs", symbol = "CodeTree::node_path" },
+    { file = "src/code/facts/search.rs", symbol = "CodeTree::search" },
+    { file = "src/code/facts/search.rs", symbol = "name_match" },
+]

@@ -98,24 +98,72 @@ pub(super) fn page(level: Level, from: Option<&str>) -> Outcome<Page> {
         next: None,
     };
     let mut pending = rooms(&page, children.into_iter().skip(start).rev().collect());
-    let room = pending.last().map_or(0, |(_, room)| *room);
-    let mut used = 0;
-    while let Some((child, own)) = pending.pop() {
-        let Some(child) = fitted(child, own) else {
-            page.too_large += 1;
-            continue;
-        };
-        let bytes = json_len(&to_value(&child)) + usize::from(!page.children.is_empty());
-        if used + bytes > room {
-            pending.push((child, own));
-            break;
-        }
-        used += bytes;
-        page.children.push(child);
-    }
+    let filled = fill(&mut pending, fitted, |child, previous| {
+        json_len(&to_value(child)) + usize::from(previous.is_some())
+    });
+    page.children = filled.listed;
+    page.too_large = filled.too_large;
     page.omitted = pending.len();
     page.next = pending.pop().map(|(child, _)| child.address);
     Ok(page)
+}
+
+/// What a page lists of the items a walk offers it.
+pub(super) struct Filled<T> {
+    /// In the walk's order.
+    pub(super) listed: Vec<T>,
+    /// Those left out, as none fits a page.
+    pub(super) too_large: usize,
+}
+
+/// The items `pending` holds, the next on top, each with the bytes the
+/// items of a page that starts at it may take, taken while they fit the
+/// room of the first. Each is taken as `fitted` makes it fit its own room,
+/// and `bytes` measures it as JSON after the item listed before it, its
+/// comma included. One `fitted` gives none for is counted too large. The
+/// first item that does not fit stays on top of `pending`.
+pub(super) fn fill<T>(
+    pending: &mut Vec<(T, usize)>,
+    fitted: impl Fn(T, usize) -> Option<T>,
+    bytes: impl Fn(&T, Option<&T>) -> usize,
+) -> Filled<T> {
+    let room = pending.last().map_or(0, |(_, room)| *room);
+    let mut filled = Filled {
+        listed: Vec::new(),
+        too_large: 0,
+    };
+    let mut used = 0;
+    while let Some((item, own)) = pending.pop() {
+        let Some(item) = fitted(item, own) else {
+            filled.too_large += 1;
+            continue;
+        };
+        let taken = bytes(&item, filled.listed.last());
+        if used + taken > room {
+            pending.push((item, own));
+            break;
+        }
+        used += taken;
+        filled.listed.push(item);
+    }
+    filled
+}
+
+/// Where a page of `total` items in a stated order starts: at `from`, the
+/// argument `from_position`, a previous page's `next`, or at the first. A
+/// position past the last item is refused, but 0 on an empty order.
+pub(super) fn position(from: Option<usize>, total: usize) -> Outcome<usize> {
+    match from {
+        None | Some(0) => Ok(0),
+        Some(at) if at < total => Ok(at),
+        Some(at) => {
+            let message = format!(
+                "{at} is past the {total} items of this result: a page's `next` names where the \
+                 next starts"
+            );
+            Err(ToolError::invalid("from_position", message))
+        }
+    }
 }
 
 /// The place in `children` of the child whose address is `from`; the
@@ -481,6 +529,21 @@ mod tests {
         assert!(
             payload["message"].as_str().unwrap().contains("`file:gone`"),
             "{payload}"
+        );
+    }
+
+    #[test]
+    fn a_position_past_the_last_item_is_refused_naming_from_position_but_0_of_none() {
+        let past = position(Some(2), 2).err().unwrap();
+
+        let payload = serde_json::to_value(&past).unwrap();
+        assert_eq!(
+            [&payload["kind"], &payload["field"]],
+            ["invalid_argument", "from_position"]
+        );
+        assert_eq!(
+            [position(Some(1), 2), position(Some(0), 0)].map(Result::ok),
+            [Some(1), Some(0)]
         );
     }
 }

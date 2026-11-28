@@ -1,0 +1,13 @@
+component = "tools"
+choice = "A file's frame: its definitions with kind, visibility, test role and lines; each line range's decisions, with status; its line count; whether it is indexed and why not; its types' impls listed by path"
+reason = "The owner's view of a file computes no fact: each definition, decision, line count and refusal it shows is a field of trurlic map --json --frame <file address>. The view draws the file's outline from its definitions, and the decisions beside the lines they cover, so each line range carries its decisions with their status. Whether the index read the file, and why not, tells a file with no definition from one the index refused. A type's impls in other files are listed by file and path, so the view opens them from the type."
+alternatives = [
+    "Show the file's text with the frame: rejected because a window of text by line is a route of the view's server, and a page would carry kilobytes no outline reads",
+]
+status = "accepted"
+origin = "the map command: a file's frame and search"
+created = "2026-11-28T02:57:55.156109733Z"
+anchors = [
+    { file = "src/sources/frame.rs", symbol = "Frame" },
+    { file = "src/tools/map/frame.rs", symbol = "FRAME" },
+]

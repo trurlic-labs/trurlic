@@ -24,8 +24,8 @@ pub(crate) use file::{
 };
 pub(in crate::code) use file::{LEXICAL_MAX_BYTES, MAX_DOC_BYTES, TREE_SITTER_MAX_BYTES};
 pub(in crate::code) use import::{Before, Binds, Import, ImportKind, PathStep};
-pub(in crate::code) use kinds::What;
 pub(crate) use kinds::{DefinitionKind, Role, Visibility};
+pub(in crate::code) use kinds::{SelfType, What};
 pub(crate) use manifest::DependencyKind;
 pub(in crate::code) use manifest::{
     Dependency, DependencySource, Manifest, Package, Workspace, WorkspaceDependency,

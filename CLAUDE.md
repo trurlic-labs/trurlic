@@ -27,11 +27,11 @@ lint       → store, code                 pure findings over the graph that ref
                                          their repairs
 sources    → code, lint, store, git      code-root walk, bounded reads, index cache, other worktrees,
                                          the anchor findings of `check` and `status`, a level of the
-                                         code tree for `map`
+                                         code tree, a file's frame and a search for `map`
 code       → store (types)               pure code index: its values (`index/`), resolvers (`parse/`,
                                          `lexical/`) and the one reader of Rust paths, facts over a
                                          whole tree (`facts/`): places, crates, imports, a level
-                                         and a node's address
+                                         and a node's address, a file's frame, a search
 git        → —                           `git` as a child process; `git::graph` = the graph's own repo
 budget     → —                           a tool call's byte limits, fitting output into a byte budget
 error      → store (types)               `Error`, `Result`
@@ -65,6 +65,8 @@ purity     → code (tests only)           what a module's non-test code may nam
 | Tool registry / its MCP listing and result envelope | `tools/registry.rs` / `mcp/listing.rs`, `mcp/envelope.rs` |
 | Tools written by hand (`get_context`, `get_decisions_for_file`) | `tools/handwritten/` |
 | The code tree a level at a time: a node's address / a level's files, sums, edges and anchors / its values with the decisions / `map`'s pages and `trurlic map --json` | `code/facts/address.rs` / `code/facts/level.rs` / `sources/level.rs` / `tools/map/`, `commands/map.rs` |
+| A file's frame: its definitions and impls by name / where anchors lie in its lines / its values with the decisions / its pages | `code/facts/frame.rs` / `code/facts/coverage.rs` / `sources/frame.rs` / `tools/map/frame.rs` |
+| A search of the tree's paths: the one rank / the query / its pages | `code/facts/search.rs` / `sources/search.rs` / `tools/map/search.rs` |
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/index/work.rs` / `code/index/encoding/` |
 | Rust tokens no span hash holds (rustfmt's commas and braces) | `code/parse/rust/silent.rs` |

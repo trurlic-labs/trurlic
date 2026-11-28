@@ -90,8 +90,8 @@ impl DefinitionKind {
         }
     }
 
-    /// The kind's name in a query file.
-    pub(in crate::code) const fn name(self) -> &'static str {
+    /// The kind's name in a query file, and in `map`'s JSON.
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Module => "module",
             Self::Struct => "struct",
@@ -119,13 +119,15 @@ impl DefinitionKind {
         }
     }
 
-    /// The kind a query file names `name`.
+    /// The kind a query file names `name`; none for `impl`, a Rust trait
+    /// impl, which the Rust resolver alone makes, with its self type.
     pub(in crate::code) fn of_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|kind| kind.name() == name)
+        let named = Self::ALL.into_iter().find(|kind| kind.name() == name);
+        named.filter(|kind| *kind != Self::Impl)
     }
 
     /// Every kind, in the order of their codes in a cache entry.
-    pub(super) const ALL: [Self; 23] = [
+    pub(crate) const ALL: [Self; 23] = [
         Self::Module,
         Self::Struct,
         Self::Union,
@@ -158,6 +160,55 @@ pub(in crate::code) struct What {
     pub(in crate::code) kind: DefinitionKind,
     pub(in crate::code) role: Role,
     pub(in crate::code) visibility: Option<Visibility>,
+    /// A trait impl's alone.
+    pub(in crate::code) self_type: Option<SelfType>,
+}
+
+impl What {
+    /// A definition of `kind` that is no trait impl.
+    pub(in crate::code) const fn new(
+        kind: DefinitionKind,
+        role: Role,
+        visibility: Option<Visibility>,
+    ) -> Self {
+        Self {
+            kind,
+            role,
+            visibility,
+            self_type: None,
+        }
+    }
+
+    /// A trait impl, its self type `written` so; its visibility is its
+    /// trait's, which the source does not state.
+    pub(in crate::code) const fn trait_impl(role: Role, written: SelfType) -> Self {
+        Self {
+            kind: DefinitionKind::Impl,
+            role,
+            visibility: None,
+            self_type: Some(written),
+        }
+    }
+}
+
+/// How a Rust trait impl writes its self type, which no path of the index
+/// holds: the segment its path is given is the type's last name either
+/// way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::code) enum SelfType {
+    /// No path before the name its segment holds, its generics, references
+    /// and `dyn` aside: `T`, `&T<U>`, `dyn T`, and `Box<a::X>`, bare by
+    /// `Box`. And every self type with no name, spelled whole, which names
+    /// no type: `[a::X; 3]`, `(a::X)`, `fn(X)`.
+    Bare,
+    /// A path of two segments or more: `std::io::Error`, `crate::x::T`,
+    /// `super::T`.
+    Qualified,
+}
+
+impl SelfType {
+    /// Every way, in the order of their codes in a cache entry.
+    pub(in crate::code) const ALL: [Self; 2] = [Self::Bare, Self::Qualified];
 }
 
 /// Whether a definition is test code or the code a project ships.
@@ -200,7 +251,7 @@ pub(crate) enum Visibility {
 
 impl Visibility {
     /// Every visibility, in the order of their codes in a cache entry.
-    pub(in crate::code) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Private,
         Self::Crate,
         Self::Super,
@@ -209,8 +260,8 @@ impl Visibility {
         Self::Protected,
     ];
 
-    /// The visibility's name in a query file.
-    pub(in crate::code) const fn name(self) -> &'static str {
+    /// The visibility's name in a query file, and in `map`'s JSON.
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Private => "private",
             Self::Crate => "crate",

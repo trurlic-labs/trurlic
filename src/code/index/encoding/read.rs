@@ -4,7 +4,7 @@ use crate::code::index::file::{
     Definition, Doc, FileIndex, FileKind, IndexFault, Indexed, ModuleFile, RustFacts,
 };
 use crate::code::index::import::{Before, Binds, Import, ImportKind, PathStep};
-use crate::code::index::kinds::{DefinitionKind, Role, Visibility};
+use crate::code::index::kinds::{DefinitionKind, Role, SelfType, Visibility};
 use crate::code::index::manifest::{
     Dependency, DependencyKind, DependencySource, Manifest, Package, Workspace, WorkspaceDependency,
 };
@@ -51,6 +51,18 @@ pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Optio
 /// writes it.
 fn role_of(code: u8) -> Option<Role> {
     [Role::Code, Role::Test].get(usize::from(code)).copied()
+}
+
+/// The self type of a definition of `kind` whose code is `code`, as
+/// [`self_type_code`](super::codes::self_type_code) writes it: one for a
+/// trait impl, none for every other kind; `None` for a code that breaks
+/// that.
+fn self_type_of(kind: DefinitionKind, code: u8) -> Option<Option<SelfType>> {
+    let self_type = match code {
+        0 => None,
+        code => Some(*SelfType::ALL.get(usize::from(code) - 1)?),
+    };
+    (self_type.is_some() == (kind == DefinitionKind::Impl)).then_some(self_type)
 }
 
 /// A reader of an entry's bytes, which charges each heap block a value
@@ -378,7 +390,8 @@ impl<'b> Reader<'b> {
                 1 => definitions.last().map(|last| (last.span, last.hash))?,
                 _ => return None,
             };
-            let doc = self.doc(marks >> 4)?;
+            let self_type = self_type_of(kind, marks >> 6)?;
+            let doc = self.doc((marks >> 4) & 0b11)?;
             definitions.push(Definition {
                 scope,
                 kind,
@@ -387,6 +400,7 @@ impl<'b> Reader<'b> {
                 role,
                 visibility,
                 doc,
+                self_type,
             });
         }
         Some(definitions)

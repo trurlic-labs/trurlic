@@ -31,7 +31,7 @@ pub(crate) mod repair;
 mod trees;
 
 pub(crate) use finding::{Checked, Finding, Kind, KindName, Repair, Severity, Unasked, Worktree};
-pub(crate) use judge::{WEAK_FILES, findings, unasked};
+pub(crate) use judge::{WEAK_FILES, findings, in_tree, unasked};
 pub(crate) use repair::{Prior, Renames};
 pub(crate) use trees::{Asked, Decisions, Elsewhere, Here};
 

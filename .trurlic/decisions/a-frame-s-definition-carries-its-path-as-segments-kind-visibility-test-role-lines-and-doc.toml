@@ -1,0 +1,12 @@
+component = "code"
+choice = "A frame's definition carries its path as the index's segments, its kind, its visibility where stated, its test role, its first and last line, and a Rust definition's doc"
+reason = "A path is given as its segments as the index spells them, so nesting is read from the paths: a Rust segment may hold :: inside a trait's arguments, so a joined path could not be split back. The test role is the definition's own mark or its file's, as the index's second step gives it. The lines are its span's, its attributes and doc comments included. A doc is a Rust definition's first paragraph, as the index holds it."
+alternatives = [
+    "The path as one string joined by ::: rejected because a trait's arguments hold ::, so nesting could not be read from it",
+]
+status = "proposed"
+origin = "the map command: a file's frame and search"
+created = "2026-11-28T04:23:14.932032285Z"
+anchors = [
+    { file = "src/code/facts/frame.rs", symbol = "CodeTree::file_definitions" },
+]

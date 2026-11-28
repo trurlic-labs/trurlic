@@ -112,6 +112,13 @@ impl<'i> ModulePaths<'i> {
         Some(*segment)
     }
 
+    /// Every path but the root module's, each after its parent, with that
+    /// parent and its last segment.
+    pub(super) fn each(&self) -> impl Iterator<Item = (ModulePath, ModulePath, &'i str)> + '_ {
+        let paths = self.paths.iter().enumerate();
+        paths.map(|(id, &(parent, segment))| (ModulePath(Some(id)), parent, segment))
+    }
+
     /// The segments of `path`, outermost first.
     pub(super) fn segments(&self, path: ModulePath) -> Vec<&'i str> {
         let mut segments = Vec::new();

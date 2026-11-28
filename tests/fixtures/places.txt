@@ -5,16 +5,19 @@ src/cli.rs: . src > cli
 src/code/dispatch.rs: . src > code::dispatch
 src/code/facts/address.rs: . src > code::facts::address
 src/code/facts/code_facts.rs: . src > code::facts::code_facts
+src/code/facts/coverage.rs: . src > code::facts::coverage
 src/code/facts/crate_graph.rs: . src > code::facts::crate_graph
 src/code/facts/crates.rs: . src > code::facts::crates
 src/code/facts/definitions.rs: . src > code::facts::definitions
 src/code/facts/entry.rs: . src > code::facts::entry
+src/code/facts/frame.rs: . src > code::facts::frame
 src/code/facts/imports.rs: . src > code::facts::imports
 src/code/facts/level.rs: . src > code::facts::level
 src/code/facts/mod.rs: . src > code::facts
 src/code/facts/path.rs: . src > code::facts::path
 src/code/facts/places.rs: . src > code::facts::places
 src/code/facts/roles.rs: . src > code::facts::roles
+src/code/facts/search.rs: . src > code::facts::search
 src/code/facts/tree.rs: . src > code::facts::tree
 src/code/facts/walk.rs: . src > code::facts::walk
 src/code/index/encoding/codes.rs: . src > code::index::encoding::codes
@@ -149,6 +152,7 @@ src/purity/tests.rs: . src > purity::tests
 src/sources/blobs.rs: . src > sources::blobs
 src/sources/cache.rs: . src > sources::cache
 src/sources/findings.rs: . src > sources::findings
+src/sources/frame.rs: . src > sources::frame
 src/sources/indexer.rs: . src > sources::indexer
 src/sources/level.rs: . src > sources::level
 src/sources/lexical.rs: . src > sources::lexical
@@ -158,6 +162,7 @@ src/sources/repair/mod.rs: . src > sources::repair
 src/sources/repair/moves.rs: . src > sources::repair::moves
 src/sources/repair/recheck.rs: . src > sources::repair::recheck
 src/sources/repair/renames.rs: . src > sources::repair::renames
+src/sources/search.rs: . src > sources::search
 src/sources/source.rs: . src > sources::source
 src/sources/testing.rs: . src > sources::testing
 src/sources/tests.rs: . src > sources::tests
@@ -241,8 +246,10 @@ src/tools/handwritten/context.rs: . src > tools::handwritten::context
 src/tools/handwritten/mod.rs: . src > tools::handwritten
 src/tools/handwritten/tool.rs: . src > tools::handwritten::tool
 src/tools/map/child.rs: . src > tools::map::child
+src/tools/map/frame.rs: . src > tools::map::frame
 src/tools/map/mod.rs: . src > tools::map
 src/tools/map/page.rs: . src > tools::map::page
+src/tools/map/search.rs: . src > tools::map::search
 src/tools/map/tool.rs: . src > tools::map::tool
 src/tools/mod.rs: . src > tools
 src/tools/registry.rs: . src > tools::registry

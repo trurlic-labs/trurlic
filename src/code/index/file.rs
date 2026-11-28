@@ -8,7 +8,7 @@
 use std::fmt;
 
 use super::import::{Import, PathStep};
-use super::kinds::{DefinitionKind, Role, Visibility};
+use super::kinds::{DefinitionKind, Role, SelfType, Visibility};
 use super::manifest::Manifest;
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::{Span, SpanHash};
@@ -149,6 +149,9 @@ pub(crate) struct Definition {
     /// `None` where it has none, and for a re-export and every definition
     /// of a file that is not Rust, whose docs the index does not read.
     pub(in crate::code) doc: Option<Doc>,
+    /// How a Rust trait impl writes its self type; `None` for every other
+    /// definition. No part of its path, so no anchor names it.
+    pub(in crate::code) self_type: Option<SelfType>,
 }
 
 /// The first paragraph of a doc as the Rust resolver reads it

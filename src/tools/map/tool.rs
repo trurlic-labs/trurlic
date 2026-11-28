@@ -29,7 +29,7 @@ pub(crate) struct MapArgs {
 /// The most bytes an address argument holds: an address a page lists
 /// takes no more raw bytes than its JSON escape, which the page holds
 /// within the result budget.
-const MAX_ADDRESS_BYTES: usize = MAX_TOOL_RESULT_BYTES;
+pub(super) const MAX_ADDRESS_BYTES: usize = MAX_TOOL_RESULT_BYTES;
 
 impl Args for MapArgs {
     fn declare(fields: &mut Fields<'_, '_>) -> Self {
@@ -74,19 +74,28 @@ mod tests {
 
     use super::*;
     use crate::tools::spec::SpecTool;
+    use crate::tools::{FRAME, SEARCH};
 
-    /// The schemas a reader's types of `map`'s JSON are generated from,
-    /// pinned in `tests/integration/golden/map_schemas.json` by the rule of
-    /// `tests/integration/golden.rs`. It stands in the crate because no
-    /// surface prints the schemas for an integration test to read.
+    /// The schemas a reader's types of the `map` tools' JSON are generated
+    /// from, by tool, pinned in `tests/integration/golden/map_schemas.json`
+    /// by the rule of `tests/integration/golden.rs`. It stands in the crate
+    /// because no surface prints the schemas for an integration test to
+    /// read.
     #[test]
-    fn the_schemas_of_map_match_golden() {
+    fn the_schemas_of_the_map_tools_match_golden() {
         let path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/integration/golden/map_schemas.json");
-        let schemas = json!({
-            "inputSchema": MAP.input_schema(),
-            "outputSchema": MAP.output_schema(),
-        });
+        let tools: [&dyn SpecTool; 3] = [&MAP, &FRAME, &SEARCH];
+        let schemas: serde_json::Map<String, serde_json::Value> = tools
+            .into_iter()
+            .map(|tool| {
+                let schemas = json!({
+                    "inputSchema": tool.input_schema(),
+                    "outputSchema": tool.output_schema(),
+                });
+                (tool.name().to_owned(), schemas)
+            })
+            .collect();
         let actual = serde_json::to_string_pretty(&schemas).unwrap() + "\n";
 
         if std::env::var_os("TRURLIC_UPDATE_GOLDEN").is_some_and(|setting| setting == "1") {

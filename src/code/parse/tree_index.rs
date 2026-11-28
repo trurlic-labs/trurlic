@@ -89,6 +89,7 @@ impl<'t> TreeIndex<'t> {
             role: what.role,
             visibility: what.visibility,
             doc,
+            self_type: what.self_type,
         }
     }
 

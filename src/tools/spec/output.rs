@@ -128,6 +128,21 @@ impl Show for Str {
     }
 }
 
+/// An array of strings.
+pub(crate) struct Texts;
+
+impl Show for Texts {
+    type Value = Vec<String>;
+
+    fn schema(&self) -> Map<String, Value> {
+        schema([("type", "array".into()), ("items", Str.schema().into())])
+    }
+
+    fn value(&self, value: &Vec<String>) -> Value {
+        value.iter().map(String::as_str).collect()
+    }
+}
+
 /// A count.
 pub(crate) struct Count;
 

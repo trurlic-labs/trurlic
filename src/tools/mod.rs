@@ -15,7 +15,7 @@ mod status;
 mod truncate;
 
 pub(crate) use apply::{APPLY, Answer, Duplicates};
-pub(crate) use map::MAP;
+pub(crate) use map::{FRAME, MAP, SEARCH};
 pub(crate) use registry::{TOOLS, Tool};
 pub(crate) use result::{ResultKind, ToolError, ToolResult};
 pub(crate) use spec::{Destructive, Output, to_value};

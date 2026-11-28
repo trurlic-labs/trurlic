@@ -17,7 +17,7 @@ use super::reexports::{self, Reexport};
 use super::silent;
 use crate::code::index::{
     DefinitionKind, FileIndex, IndexFault, Lines, ModuleFile, Role, ScopeId, ScopeTree, Segment,
-    Visibility, What,
+    SelfType, Visibility, What,
 };
 use crate::code::parse::parser::{self, text_of};
 use crate::code::parse::tree_index::TreeIndex;
@@ -196,11 +196,7 @@ impl Walk<'_> {
             .scopes
             .enter(context.scope, vec![Segment::of_rust(name)])?;
         if name != "_" {
-            let what = What {
-                kind,
-                role: context.role,
-                visibility: context.within.visibility(own),
-            };
+            let what = What::new(kind, context.role, context.within.visibility(own));
             let doc = docs::first_paragraph(&visit.attached, body, self.text);
             self.build
                 .define(scope, visit.start..node.end_byte(), what, doc)?;
@@ -295,14 +291,11 @@ impl Walk<'_> {
         };
         let name = vec![Segment::of_rust(text_of(name, self.text))];
         let scope = self.build.scopes.enter(visit.context.scope, name)?;
-        let what = What {
-            kind: DefinitionKind::Macro,
-            role: visit.context.role,
-            visibility: Some(match visit.marks.macro_export {
-                true => Visibility::Public,
-                false => Visibility::Private,
-            }),
+        let visibility = match visit.marks.macro_export {
+            true => Visibility::Public,
+            false => Visibility::Private,
         };
+        let what = What::new(DefinitionKind::Macro, visit.context.role, Some(visibility));
         let doc = docs::first_paragraph(&visit.attached, None, self.text);
         self.build
             .define(scope, visit.start..visit.node.end_byte(), what, doc)
@@ -322,7 +315,7 @@ impl Walk<'_> {
             return Ok(context);
         };
         self.note_generics(node);
-        let type_segment = type_segment(self_type, &self.build);
+        let (type_segment, written) = type_segment(self_type, &self.build);
         Ok(match node.child_by_field_name("trait") {
             Some(trait_node) => {
                 let trait_segment =
@@ -331,11 +324,7 @@ impl Walk<'_> {
                     .build
                     .scopes
                     .enter(context.scope, vec![type_segment, trait_segment])?;
-                let what = What {
-                    kind: DefinitionKind::Impl,
-                    role: context.role,
-                    visibility: None,
-                };
+                let what = What::trait_impl(context.role, written);
                 let body = node.child_by_field_name("body");
                 let doc = docs::first_paragraph(attached, body, self.text);
                 self.build
@@ -449,12 +438,17 @@ fn child_within(node: Node<'_>, child: Node<'_>, within: Within) -> Within {
 /// The segment an `impl` gives its type: the last name of its path, its
 /// generics and references dropped; a type with no name (a tuple, an
 /// array) whole. It is spelled from the tokens its hash holds, so no
-/// comment and no trailing comma rustfmt adds is part of it.
-fn type_segment(mut node: Node<'_>, build: &TreeIndex<'_>) -> Segment {
+/// comment and no trailing comma rustfmt adds is part of it. And how the
+/// type is written: qualified when its path has a segment before that name.
+fn type_segment(mut node: Node<'_>, build: &TreeIndex<'_>) -> (Segment, SelfType) {
+    let mut written = SelfType::Bare;
     loop {
         let inner = match node.kind() {
             "generic_type" | "reference_type" | "pointer_type" => node.child_by_field_name("type"),
-            "scoped_type_identifier" => node.child_by_field_name("name"),
+            "scoped_type_identifier" => {
+                written = SelfType::Qualified;
+                node.child_by_field_name("name")
+            }
             "dynamic_type" => node.child_by_field_name("trait"),
             _ => None,
         };
@@ -463,5 +457,8 @@ fn type_segment(mut node: Node<'_>, build: &TreeIndex<'_>) -> Segment {
             None => break,
         }
     }
-    Segment::of_rust(&build.spelled(&node.byte_range()))
+    (
+        Segment::of_rust(&build.spelled(&node.byte_range())),
+        written,
+    )
 }

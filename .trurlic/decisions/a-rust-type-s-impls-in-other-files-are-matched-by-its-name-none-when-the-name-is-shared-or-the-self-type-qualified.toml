@@ -1,0 +1,18 @@
+component = "code"
+choice = "A Rust type's impls in other files are matched by its name; none is listed when another holder shares the name, nor a trait impl whose self type has a path before the name"
+reason = "The index holds no type an impl resolves to, only the segment its path is given, the self type's name with its own path dropped. So an impl in another walked Rust file is matched to a type by that name alone. A name that two holders of the tree share, structs, enums, unions, traits or type aliases, at two paths or in two files, has no impl listed, and the frame states how many hold it. A trait impl whose self type is written with a path before its name is listed under no type, as it may name another crate's: impl From<Error> for std::io::Error. The Rust resolver records how the self type is written on the impl's definition, no part of its path, so no anchor spells it. Every inherent impl is listed, as Rust lets one only name a type of its own crate. Matching by name cannot tell a generic parameter, or a type a use renames, from the type of that name. An impl through a type alias of another name is not found, and an inherent impl with no member is not listed, as the index holds its members alone."
+alternatives = [
+    "Resolve an impl's type through the imports of its file: rejected because the index holds no such resolution, and a second resolver of paths would drift from the one the imports use",
+    "Attribute the impls of a shared name to every holder of it: rejected because a view would show another type's or a trait object's impls as this type's",
+    "The self type's spelling as a segment of the impl's path: rejected because two impls of one path written two ways would split one thing an anchor names into two",
+]
+status = "proposed"
+origin = "the map command: a file's frame and search"
+created = "2026-11-28T06:03:22.755348004Z"
+anchors = [
+    { file = "src/code/facts/frame.rs", symbol = "Impls" },
+    { file = "src/code/facts/frame.rs", symbol = "holder_name" },
+    { file = "src/code/facts/frame.rs", symbol = "impl_name" },
+    { file = "src/code/index/kinds.rs", symbol = "SelfType" },
+    { file = "src/sources/frame.rs", symbol = "Impls" },
+]
