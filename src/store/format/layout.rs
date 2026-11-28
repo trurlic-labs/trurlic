@@ -34,7 +34,7 @@ impl Store {
     }
 
     /// The graph at `root`, read for the tree at `code_root`.
-    pub fn reached_from(root: PathBuf, code_root: PathBuf) -> Self {
+    pub(crate) fn reached_from(root: PathBuf, code_root: PathBuf) -> Self {
         Self { root, code_root }
     }
 

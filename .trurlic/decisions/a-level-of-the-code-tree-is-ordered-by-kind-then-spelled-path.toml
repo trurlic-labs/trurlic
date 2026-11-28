@@ -1,0 +1,15 @@
+component = "code"
+choice = "A level of the code tree lists its crates, modules, directories and files in that order, each kind by its spelled path, from an index of levels by holder built with the tree"
+reason = "A printed level must read the same whatever else the tree holds, so its order is a function of what it lists. Module path ids are given in the order the walk meets the paths, which an unrelated file added elsewhere changes, so they order nothing a reader sees. Siblings of one kind share all of their spelled path but its last segment, so that segment orders them with no path spelled. A level is read from an index built once, each node entered from the first file below it, so reading one takes time in its own size, not in the depth of every file."
+alternatives = [
+    "Order modules by their path id: rejected because adding an unrelated file reorders a level",
+    "Find a level by going up from every file: rejected because each call took time in the sum of all depths, seconds for a chain of 16,000 modules",
+]
+status = "proposed"
+origin = "a file's place and the crates in the code index"
+created = "2026-11-27T22:38:39.927037958Z"
+anchors = [
+    { file = "src/code/facts/tree.rs", symbol = "CodeTree::children" },
+    { file = "src/code/facts/tree.rs", symbol = "CodeTree::levels" },
+    { file = "src/code/facts/tree.rs", symbol = "CodeTree::order_of" },
+]

@@ -6,7 +6,7 @@ alternatives = [
     "Keep the migration registry and its run together in format: the run commits through write, and every read in write checks the version against the registry, a cycle",
     "Keep FormatVersion and Quality beside the code that checks them: model would then name format and quality, a value depending on its reader",
     "Let the parts name each other through the store root's re-exports: shorter paths, but no reader or test can tell which part an item comes from",
-    "Hold the order with a text scan for crate::store:: paths: it misses a use list, a chain of supers, a root re-export reached through super and an alias, which the purity reader reads",
+    "Hold the order with a text scan for crate::store:: paths: it misses a use list, a chain of supers, a root re-export reached through super and an alias, which the one reader of Rust paths reads",
 ]
 status = "proposed"
 origin = "module structure"

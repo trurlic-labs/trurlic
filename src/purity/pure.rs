@@ -2,8 +2,7 @@
 //! construction, of what its non-test code may name, and the names and
 //! macros it never spells.
 
-use super::path::{Named, from_crate, paths};
-use super::read::{Crate, Read, is_within, text_at};
+use super::read::{Crate, Named, Read, is_within, text_at};
 
 /// The modules of `std`, `core` and `alloc` a pure module may name: none
 /// reads or writes outside the process's memory, but for the hashed
@@ -109,9 +108,6 @@ fn file_faults(
             (name, _) if REFUSED_NAMES.contains(&name) => {
                 found.push((token.line, format!("names `{name}`")));
             }
-            ("macro_rules!", _) | ("macro_rules", "!") => {
-                found.push((token.line, "macro_rules!".to_owned()));
-            }
             ("include_str", "!") if is_admitted_include(file, at, place) => {}
             (name, "!") if MACROS.contains(&name) => {
                 found.push((token.line, format!("{name}!")));
@@ -119,8 +115,12 @@ fn file_faults(
             _ => {}
         }
     }
-    for named in paths(file) {
-        if let Some(fault) = path_fault(&named, dependencies, allowed) {
+    for named in &file.paths {
+        let module = file
+            .modules
+            .get(named.module)
+            .map_or(&[][..], Vec::as_slice);
+        if let Some(fault) = path_fault((named, module), dependencies, allowed) {
             found.push((named.line, fault));
         }
     }
@@ -160,13 +160,17 @@ fn is_admitted_include(file: &Read, at: usize, place: Place<'_>) -> bool {
     segments.len() > dir_depth && segments.join("/").starts_with(&format!("{}/", place.dir))
 }
 
-/// Why `named`, in a crate whose dependencies are `dependencies`, reaches
-/// outside what `allowed` holds; `None` when it does not. A path of
-/// `super`s is read from the module it is named in.
-fn path_fault(named: &Named<'_>, dependencies: &[String], allowed: &AllowList) -> Option<String> {
+/// Why `named`, standing in `module` in a crate whose dependencies are
+/// `dependencies`, reaches outside what `allowed` holds; `None` when it
+/// does not. A path of `super`s is read from the module it is named in.
+fn path_fault(
+    (named, module): (&Named, &[String]),
+    dependencies: &[String],
+    allowed: &AllowList,
+) -> Option<String> {
     let path = &named.segments;
     let refuse = || Some(format!("names `{}`", path.join("::")));
-    if let Some(rest) = from_crate(path, &named.module) {
+    if let Some(rest) = named.crate_path(module) {
         return match rest.as_slice() {
             rest if allowed.modules.iter().any(|module| goes_into(rest, module)) => None,
             ["store", item, ..] if allowed.store_items.contains(item) => None,
@@ -219,30 +223,22 @@ mod tests {
             crates: &[],
             crate_items: &[],
         };
-        let named = |text: &str, module: &[&'static str]| Named {
+        let named = |text: &str| Named {
             line: 1,
             segments: text.split("::").map(str::to_owned).collect(),
-            module: module.to_vec(),
+            module: 0,
             exported: false,
         };
-        let file = ["code", "index", "scope"];
-        let inline = ["code", "parse", "rust", "inner"];
+        let owned = |module: &[&str]| module.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let file = owned(&["code", "index", "scope"]);
+        let inline = owned(&["code", "parse", "rust", "inner"]);
+        let fault = |text: &str, module: &[String]| path_fault((&named(text), module), &[], &below);
 
+        assert_eq!(fault("super::span::Span", &file), None);
         assert_eq!(
-            path_fault(&named("super::span::Span", &file), &[], &below),
-            None
-        );
-        assert_eq!(
-            path_fault(&named("super::super::parse::Token", &file), &[], &below),
+            fault("super::super::parse::Token", &file),
             Some("names `super::super::parse::Token`".to_owned())
         );
-        assert_eq!(
-            path_fault(
-                &named("super::super::super::index::Span", &inline),
-                &[],
-                &below
-            ),
-            None
-        );
+        assert_eq!(fault("super::super::super::index::Span", &inline), None);
     }
 }

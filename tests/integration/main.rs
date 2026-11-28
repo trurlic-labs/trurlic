@@ -20,6 +20,7 @@ mod install;
 mod invalid_graph;
 mod lint;
 mod malformed_node;
+mod map;
 mod migrate;
 mod output;
 #[cfg(unix)]

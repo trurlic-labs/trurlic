@@ -49,6 +49,16 @@ impl fmt::Display for Span {
     }
 }
 
+/// The lines of `bytes`, a file's: each `\n` ends one, and bytes after
+/// the last `\n` are one more. A `\r\n` ends one line, a `\r` alone none,
+/// and an empty file has none; so `a` and `a\n` hold one line, `a\nb` and
+/// `a\r\nb\r\n` two, and `\n` one, empty. It is the line [`Lines::span`]
+/// puts a file's last byte on. One pass over the bytes.
+pub(crate) fn line_count(bytes: &[u8]) -> usize {
+    let breaks = bytes.iter().filter(|&&byte| byte == b'\n').count();
+    breaks + usize::from(bytes.last().is_some_and(|&last| last != b'\n'))
+}
+
 /// The line of each byte offset of one text.
 pub(in crate::code) struct Lines {
     /// The offset each line starts at; the first is 0.
@@ -204,6 +214,27 @@ mod tests {
             }
         );
         assert_eq!(lines.span(6, 6).last_line, 4);
+    }
+
+    #[test]
+    fn a_file_has_a_line_per_line_end_and_one_for_bytes_after_the_last() {
+        for (bytes, count) in [
+            (&b""[..], 0),
+            (b"a", 1),
+            (b"a\n", 1),
+            (b"\n", 1),
+            (b"a\nb", 2),
+            (b"a\nb\n", 2),
+            (b"a\r\nb\r\n", 2),
+            (b"a\r\nb", 2),
+            (b"a\rb\r", 1),
+            (b"\n\n", 2),
+        ] {
+            assert_eq!(line_count(bytes), count, "{bytes:?}");
+            if let Some(last) = bytes.len().checked_sub(1) {
+                assert_eq!(Lines::of(bytes).span(last, last + 1).last_line, count);
+            }
+        }
     }
 
     #[test]

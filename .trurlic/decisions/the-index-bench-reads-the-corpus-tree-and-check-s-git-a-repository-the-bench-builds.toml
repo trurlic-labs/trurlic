@@ -1,0 +1,22 @@
+component = "sources"
+choice = "code_index times the anchor findings status gathers over each corpus's own tree, check_git times check's over a repository the bench builds; neither reads the tree the bench is built in"
+reason = "check's anchor findings run git in the project: the worktree list, the merge base and diff of each other worktree, the history walk and its blob reads. Timed over the tree the bench is built in, they measure that repository's history, its untracked files and its worktrees, so two builds of one commit in two worktrees disagree and read as a regression. So code_index times the findings as status gathers them, which run no git: the walk, the reads, the index and its cache, cold and warm, over the crate each seeded corpus writes, byte-identical across commits and machines. check_git times check's path, the index warm, over a repository the bench builds from the smallest corpus under CARGO_TARGET_TMPDIR: two commits and a linked worktree. The bench's git makes them in an empty environment but PATH, with a fixed identity and date, so no variable of the caller redirects or configures it. The second commit moves one component's sources, so git's history repairs their anchors; the worktree adds a file the first commit lacks, so its anchors are pending. Setup panics unless both verdicts occur, so the group never times a path that runs less git. make bench runs with GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL set, so the git check runs reads no configuration either, and only the machine's hardware differs between two runs."
+alternatives = [
+    "Keep this repository's own src/ as the tree: git then reads the developer's repository, so the numbers follow its history and worktrees, and src/ itself changes between the commits compared",
+    "Index the code fixtures under tests/: they change whenever a test needs a new case, so the input drifts between the commits compared, and the bounds fixtures time refusals",
+    "One group of check over a built repository: the index and the git costs share one number, so a regression of either hides in the other",
+]
+status = "accepted"
+origin = "the index bench measures the index"
+created = "2026-11-27T21:02:17.514279648Z"
+anchors = [
+    { file = "benches/corpus.rs", symbol = "bench_check_git" },
+    { file = "benches/corpus.rs", symbol = "bench_code_index" },
+    { file = "benches/corpus.rs", symbol = "checked_repository" },
+    { file = "benches/corpus.rs", symbol = "git" },
+    { file = "src/bench.rs", symbol = "checked_findings" },
+]
+depends_on = [
+    "benches-and-property-tests-draw-from-a-seeded-corpus",
+    "benches-drive-the-mcp-server-in-process-under-the-bench-feature",
+]

@@ -4,10 +4,11 @@
 //! forked from the calling tree's, and what git's history says of the
 //! stale anchors' files and their repairs; reads and fills the index's
 //! cache through the [`Store`](crate::store::Store); and hands the facts to `code` and `lint`
-//! as data. `tools` (`status`, `apply`) and `commands` (`check`) stand on
-//! it. A caller holds no lock of the store while it runs: the cache's
-//! write takes the exclusive lock when it is free, and the caller's own
-//! shared lock would keep it busy.
+//! as data, and builds what `map` shows of the tree: a level, a file's
+//! frame and a search. `tools` (`status`, `apply`, `map`) and `commands`
+//! (`check`) stand on it. A caller holds no lock of the store while it
+//! runs: the cache's write takes the exclusive lock when it is free, and
+//! the caller's own shared lock would keep it busy.
 //!
 //! A file is read in one bounded read, refused past
 //! [`MAX_SOURCE_FILE_BYTES`](source::MAX_SOURCE_FILE_BYTES) and when it is
@@ -30,16 +31,40 @@
 mod blobs;
 mod cache;
 mod findings;
+mod frame;
 mod indexer;
+mod level;
 mod lexical;
 mod reads;
 mod repair;
+mod search;
 mod source;
 mod walk;
 mod worktrees;
 
 pub(crate) use findings::{checked_findings, tree_findings};
+pub(crate) use frame::{
+    AnchoredDecision, DEFINITION_KINDS, FileDefinition, Frame, ImplBlock, Impls, IndexState,
+    LineRange, UnspannedAnchor, VISIBILITIES, frame,
+};
+pub(crate) use level::{
+    Child, ChildKind, CrateFacts, DecisionCounts, Definitions, Dependencies, Dependency, Doc,
+    EndpointKind, FileFacts, FilePlace, ImportEdge, Imports, Level, Lines, ManifestState,
+    ModuleFacts, level,
+};
 pub(crate) use repair::{Seen, still_holding};
+pub(crate) use search::{
+    Hit, HitDefinition, HitKind, MAX_QUERY_BYTES, MIN_QUERY_BYTES, Match, Query, QueryFault,
+    Search, Window, search,
+};
 
+#[cfg(test)]
+pub(crate) use frame::frame_in;
+#[cfg(test)]
+pub(crate) use level::{level_in, walked};
+#[cfg(test)]
+pub(crate) use search::search_in;
+#[cfg(test)]
+pub(crate) mod testing;
 #[cfg(test)]
 mod tests;

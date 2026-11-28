@@ -246,8 +246,9 @@ fn gained(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code::testing::facts;
     use crate::code::{Entry, FileFault, FileKind};
-    use crate::lint::anchors::testing::{anchor, decision, facts};
+    use crate::lint::anchors::testing::{anchor, decision};
     use crate::lint::anchors::{Asked, Elsewhere, Here, Worktree, findings, repair};
     use crate::store::{Decision, Status, StatusName};
 
@@ -274,7 +275,11 @@ mod tests {
             (
                 name.to_owned(),
                 path.to_owned(),
-                Entry::File { kind, index },
+                Entry::File {
+                    kind,
+                    lines: Some(crate::code::line_count(text.as_bytes())),
+                    index,
+                },
             )
         }));
         prior

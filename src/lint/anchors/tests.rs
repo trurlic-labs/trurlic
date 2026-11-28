@@ -1,6 +1,7 @@
 use super::finding::{Broken, Missing, Unread};
-use super::testing::{decision, facts};
+use super::testing::decision;
 use super::*;
+use crate::code::testing::facts;
 use crate::code::{CodeFacts, Entry, FileFault, FileKind, ReadFault, Resolution};
 use crate::store::{Decision, Status, StatusName};
 
@@ -54,6 +55,7 @@ fn the_verdict_on_an_anchor_that_names_nothing_follows_its_cause() {
                 "fifo.rs",
                 Entry::File {
                     kind: FileKind::Rust,
+                    lines: None,
                     index: Err(FileFault::Read(ReadFault::NotAFile)),
                 },
             ),
@@ -496,6 +498,7 @@ fn a_file_no_walk_took_is_not_counted_for_weak() {
         .collect();
     let hidden = Entry::File {
         kind: FileKind::Rust,
+        lines: Some(1),
         index: crate::code::testing::index(FileKind::Rust, b"pub fn run() {}\n")
             .map_err(FileFault::Index),
     };

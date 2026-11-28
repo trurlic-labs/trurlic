@@ -1,19 +1,51 @@
 //! What the tests read an index through: a file's index, alone or in a
-//! tree of C and C++ headers, each definition's path and the text of its
-//! span, and the inputs several modules' tests share. The purity check
-//! (`crate::purity`) reads a Rust file's tokens and a manifest's index
-//! through it too.
+//! tree of C and C++ headers, the facts of a tree of files, each
+//! definition's path and the text of its span, and the inputs several
+//! modules' tests share. The boundary tests (`crate::purity`) read a
+//! Rust file's tree, its tokens and its paths through the index's one
+//! reader of Rust paths, and a manifest's index, through it too.
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::facts::{CodeFacts, Entry, FileFault};
 use super::index::{FileKind, Indexed, ScopeId, Symbol};
 use super::parse::{BlankMacros, FileMacros, Rules, lexed, syntax_of};
 
 pub(crate) use super::index::Scopes;
-pub(crate) use super::parse::{RUST_LEXICON, Token, is_comment, parse, text_of, tokens};
+pub(crate) use super::parse::{
+    End, Led, PathKind, Reading, is_attribute, is_comment, is_inline_module, joined, lead, parse,
+    text_of,
+};
 
 /// The index of `bytes`, a file of `kind` alone in its tree: a C or C++
 /// file blanks what its own `#define`s make blankable.
 pub(crate) fn index(kind: FileKind, bytes: &[u8]) -> Indexed {
     index_in("", kind, bytes, &BlankMacros::default())
+}
+
+/// The facts of a tree of `files`, each a path and its text, indexed by
+/// the kind its name gives and taken by the walk, and of `other` entries
+/// as they are, which only an anchor brought in.
+pub(crate) fn facts(files: &[(&str, &str)], other: &[(&str, Entry)]) -> CodeFacts {
+    let walked: BTreeSet<String> = files.iter().map(|(path, _)| (*path).to_owned()).collect();
+    let mut entries: BTreeMap<String, Entry> = files
+        .iter()
+        .map(|(path, text)| {
+            let kind = FileKind::of(path).unwrap();
+            let file = Entry::File {
+                kind,
+                lines: Some(super::index::line_count(text.as_bytes())),
+                index: index(kind, text.as_bytes()).map_err(FileFault::Index),
+            };
+            ((*path).to_owned(), file)
+        })
+        .collect();
+    entries.extend(
+        other
+            .iter()
+            .map(|(path, entry)| ((*path).to_owned(), entry.clone())),
+    );
+    CodeFacts::new(entries, walked)
 }
 
 /// The index of `bytes`, the file at `path` of `kind`, in a tree whose

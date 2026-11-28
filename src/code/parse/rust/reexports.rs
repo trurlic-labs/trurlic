@@ -43,11 +43,7 @@ pub(super) fn held(
     else {
         return Vec::new();
     };
-    let what = What {
-        kind: DefinitionKind::Reexport,
-        role,
-        visibility: Some(visibility),
-    };
+    let what = What::new(DefinitionKind::Reexport, role, Some(visibility));
     use_leaves(argument, text)
         .into_iter()
         .map(|(name, leaf)| Reexport {
@@ -99,7 +95,7 @@ pub(super) fn define(
         .collect();
     for (leaf, name) in new {
         let scope = build.scopes.enter(leaf.container, vec![name])?;
-        build.define(scope, leaf.range, leaf.what)?;
+        build.define(scope, leaf.range, leaf.what, None)?;
     }
     Ok(())
 }

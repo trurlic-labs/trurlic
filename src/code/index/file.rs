@@ -1,12 +1,15 @@
 //! A file's index: the scopes of its paths, the definitions it holds,
-//! each with its scope, what it is, its span and span hash, and for Rust
-//! the module files a second step follows. An index is a function of the
+//! each with its scope, what it is, its span and span hash, for Rust the
+//! module files and the imports a second step follows, and for a Cargo
+//! manifest what it states of its crate. An index is a function of the
 //! file's kind and bytes alone, so a cache keyed by the two holds it
 //! whatever path or tree the bytes are under.
 
 use std::fmt;
 
-use super::kinds::{DefinitionKind, Role, Visibility};
+use super::import::{Import, PathStep};
+use super::kinds::{DefinitionKind, Role, SelfType, Visibility};
+use super::manifest::Manifest;
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::{Span, SpanHash};
 
@@ -24,6 +27,11 @@ pub(crate) const MAX_SOURCE_BYTES: usize = if TREE_SITTER_MAX_BYTES > LEXICAL_MA
 } else {
     LEXICAL_MAX_BYTES
 };
+
+/// The most bytes of a doc an index holds: the whole first paragraph of
+/// nearly every item and module doc a person writes, and no more of one
+/// that runs on.
+pub(in crate::code) const MAX_DOC_BYTES: usize = 512;
 
 /// What indexing a file's bytes gave.
 pub(crate) type Indexed = Result<FileIndex, IndexFault>;
@@ -138,6 +146,42 @@ pub(crate) struct Definition {
     /// `None` where the source states none: a trait impl and its members,
     /// whose visibility is the trait's, and every lexical definition.
     pub(crate) visibility: Option<Visibility>,
+    /// `None` where it has none, and for a re-export and every definition
+    /// of a file that is not Rust, whose docs the index does not read.
+    pub(in crate::code) doc: Option<Doc>,
+    /// How a Rust trait impl writes its self type; `None` for every other
+    /// definition. No part of its path, so no anchor names it.
+    pub(in crate::code) self_type: Option<SelfType>,
+}
+
+/// The first paragraph of a doc as the Rust resolver reads it
+/// (`parse/rust/docs.rs`): never empty, at most [`MAX_DOC_BYTES`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Doc {
+    text: Box<str>,
+    cut: bool,
+}
+
+impl Doc {
+    /// The doc of `text`, cut short at [`MAX_DOC_BYTES`] when `cut`;
+    /// `None` when `text` is empty or past that bound.
+    pub(in crate::code) fn new(text: String, cut: bool) -> Option<Self> {
+        let within = !text.is_empty() && text.len() <= MAX_DOC_BYTES;
+        within.then(|| Self {
+            text: text.into_boxed_str(),
+            cut,
+        })
+    }
+
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Whether the paragraph ran past [`MAX_DOC_BYTES`], so the text holds
+    /// its first bytes up to a char boundary and no more.
+    pub(crate) const fn is_cut(&self) -> bool {
+        self.cut
+    }
 }
 
 /// A `mod name;` whose items are in a file of their own: the module's
@@ -156,17 +200,49 @@ pub(crate) struct FileIndex {
     pub(crate) scopes: Vec<Scope>,
     /// Sorted by span, then scope.
     pub(crate) definitions: Vec<Definition>,
+    /// The file's own doc, a Rust file's inner one; `None` for a file of
+    /// any other kind.
+    pub(in crate::code) doc: Option<Doc>,
     /// Empty for every kind but Rust.
     pub(in crate::code) rust: RustFacts,
+    /// `None` for every file but a TOML document cargo reads as a
+    /// manifest. Boxed, so the index of every other file carries a
+    /// pointer, not a manifest's size, for what one file in many holds.
+    pub(in crate::code) manifest: Option<Box<Manifest>>,
 }
 
-/// What a Rust file holds besides its definitions: the modules declared
-/// to be in files of their own, which the second step over its crate
-/// follows.
+impl FileIndex {
+    /// The index of a file that defines and declares nothing.
+    pub(in crate::code) const EMPTY: Self = Self {
+        scopes: Vec::new(),
+        definitions: Vec::new(),
+        doc: None,
+        rust: RustFacts {
+            module_files: Vec::new(),
+            steps: Vec::new(),
+            imports: Vec::new(),
+            macro_modules: Vec::new(),
+        },
+        manifest: None,
+    };
+}
+
+/// What a Rust file holds besides its definitions, which the second step
+/// over its crate follows: the modules declared to be in files of their
+/// own, and the paths it names into its crate.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(in crate::code) struct RustFacts {
     /// In the order of the file.
     pub(in crate::code) module_files: Vec<ModuleFile>,
+    /// The steps of the imports' paths, each after the step it comes
+    /// after.
+    pub(in crate::code) steps: Vec<PathStep>,
+    /// In the order of the file.
+    pub(in crate::code) imports: Vec<Import>,
+    /// Each module, by its inline module's scope or `None` for the file's
+    /// own, that holds a macro invocation as an item, which may define
+    /// any name in it: each once, in order.
+    pub(in crate::code) macro_modules: Vec<Option<ScopeId>>,
 }
 
 /// Why a file's bytes give no index.

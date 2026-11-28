@@ -1,0 +1,14 @@
+component = "code"
+choice = "A search is one pass over the tree's nodes and definitions and one sort of its hits, and never spells a module's path whole to match or order it"
+reason = "A module path is matched from its parent's last bytes, one short of the text's length, and its own segment, in time linear in the segments times the text's length. Two module paths of one class and length are ordered from their common ancestor: the first segments that differ below it decide, as a segment holds no colon. So a chain of modules thousands deep, a sibling at each level, is searched in time near linear in its length. Two deep chains side by side are not: their paths tie at every level, and each comparison walks up to the root they share. A query that matches everything costs a sort of every definition, each page alike. A page reads only the hits it can hold."
+alternatives = [
+    "A cap on the hits a search lists: rejected because a hit past it would be lost to every page",
+    "Spell each module's path to match and compare it: rejected because a chain of modules makes the spelled paths quadratic in its depth",
+]
+status = "proposed"
+origin = "the map command: a file's frame and search"
+created = "2026-11-28T04:23:14.932032285Z"
+anchors = [
+    { file = "src/code/facts/search.rs", symbol = "CodeTree::module_order" },
+    { file = "src/code/facts/search.rs", symbol = "CodeTree::module_spellings" },
+]

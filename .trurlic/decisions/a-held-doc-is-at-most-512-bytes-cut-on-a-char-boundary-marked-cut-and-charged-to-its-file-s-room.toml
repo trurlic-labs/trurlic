@@ -1,0 +1,22 @@
+component = "code"
+choice = "A held doc is at most MAX_DOC_BYTES, 512 bytes, cut on a char boundary and marked cut by a typed flag, and charged to its file's room like every part of an entry"
+reason = "Nearly every first paragraph a person writes for an item or a module fits in 512 bytes, so the bound cuts few real docs and stops one that runs on. A cut doc says so by its flag rather than by an ellipsis in its text, so a reader tells a cut from a paragraph that ends in one. A doc's text and its heap block are charged through the scope tree, and a read charges them again before it allocates, so a megabyte of doc comments or a hundred thousand documented items keep the entry within its file's room: a doc costs a few bytes of room per byte of its comment, far under any kind's room per byte. A decode takes no doc that is empty, past the bound or of an unknown code. The docs are most of what the change adds to the cache, and their cost is their number, not their length: a lower bound would cut docs readers want and save a small share. MAX_DOC_BYTES is in BOUNDS, so another bound is another cache key."
+alternatives = [
+    "A bound of 256 bytes: rejected because it cuts module docs often and saves a small share of the docs' bytes",
+    "No bound: rejected because a doc of a megabyte would be held whole in its file's entry",
+    "Mark a cut doc by an ellipsis in its text: rejected because a reader could not tell it from a paragraph that ends in one",
+]
+status = "proposed"
+origin = "lines and leading docs in the code index"
+created = "2026-11-27T21:21:19.817755843Z"
+anchors = [
+    { file = "src/code/index/encoding/read.rs", symbol = "Reader::doc" },
+    { file = "src/code/index/file.rs", symbol = "Doc::new" },
+    { file = "src/code/index/file.rs", symbol = "MAX_DOC_BYTES" },
+    { file = "src/code/index/scope_tree.rs", symbol = "ScopeTree::admit_file_doc" },
+    { file = "src/code/parse/rust/docs.rs", symbol = "Paragraph::take" },
+]
+depends_on = [
+    "a-file-s-line-count-is-taken-where-sources-reads-it-and-a-rust-doc-s-first-paragraph-is-held-as-bounded-text",
+    "an-entry-s-room-is-its-file-times-what-its-kind-s-densest-definitions-cost",
+]

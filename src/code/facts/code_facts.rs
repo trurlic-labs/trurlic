@@ -106,10 +106,11 @@ impl Resolution {
 /// other anchors there are.
 #[derive(Debug)]
 pub(crate) struct CodeFacts {
-    entries: BTreeMap<String, Entry>,
+    pub(super) entries: BTreeMap<String, Entry>,
     test_files: BTreeSet<String>,
-    /// The paths the walk took, which a count over the tree reads.
-    walked: BTreeSet<String>,
+    /// The paths the walk took, which a count over the tree and the code
+    /// tree read.
+    pub(super) walked: BTreeSet<String>,
 }
 
 /// The kind and index of `entry`, when it is a file with an index.
@@ -118,6 +119,7 @@ fn indexed(entry: &Entry) -> Option<(FileKind, &FileIndex)> {
         Entry::File {
             kind,
             index: Ok(index),
+            ..
         } => Some((*kind, index)),
         Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
     }
@@ -142,7 +144,9 @@ impl CodeFacts {
     /// them: a path absent from them is missing.
     pub(crate) fn new(entries: BTreeMap<String, Entry>, walked: BTreeSet<String>) -> Self {
         let (tree, outside) = split(&entries, &walked);
-        let crates = Crates::of(&tree, &outside);
+        let paths = || entries.keys().map(String::as_str);
+        let is_walked = |path: &&str| walked.contains(*path);
+        let crates = Crates::of(paths().filter(is_walked), paths().filter(|p| !is_walked(p)));
         let test_files: BTreeSet<String> = test_files(&tree, &outside, &crates)
             .into_iter()
             .map(str::to_owned)
@@ -165,17 +169,19 @@ impl CodeFacts {
             // clone: the facts own what was read; the paths also mask this tree's.
             .filter_map(|(path, entry)| Some((path.clone(), entry.clone()?)))
             .collect();
+        let still = |path: &&String| self.walked.contains(*path) && !read.contains_key(*path);
         let tree: Files<'_> = self
             .entries
             .iter()
-            .filter(|(path, _)| self.walked.contains(*path) && !read.contains_key(*path))
+            .filter(|(path, _)| still(path))
             .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
             .collect();
         let outside: Files<'_> = entries
             .iter()
             .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
             .collect();
-        let crates = Crates::of(&tree, &outside);
+        let walked = self.entries.keys().filter(still).map(String::as_str);
+        let crates = Crates::of(walked, entries.keys().map(String::as_str));
         let test_files = test_files(&tree, &outside, &crates)
             .into_iter()
             .filter(|path| entries.contains_key(*path))
@@ -239,7 +245,10 @@ impl CodeFacts {
     /// has the name as its whole path: a module-level item's name is the
     /// fullest spelling it has.
     fn lone_name(&self, anchor: &Anchor) -> Option<(FileKind, String)> {
-        let Some(Entry::File { kind, index: Ok(_) }) = self.entries.get(anchor.file()) else {
+        let Some(Entry::File {
+            kind, index: Ok(_), ..
+        }) = self.entries.get(anchor.file())
+        else {
             return None;
         };
         let symbol = Symbol::parse(anchor.symbol()?, syntax_of(*kind)).ok()?;
@@ -313,7 +322,7 @@ impl CodeFacts {
     }
 
     /// `Test` for a file these facts hold as test code whole.
-    fn file_role(&self, path: &str) -> Role {
+    pub(super) fn file_role(&self, path: &str) -> Role {
         match self.test_files.contains(path) {
             true => Role::Test,
             false => Role::Code,
@@ -435,6 +444,7 @@ impl CodeFacts {
             Entry::File {
                 kind,
                 index: Ok(index),
+                ..
             } => match Symbol::parse(symbol, syntax_of(*kind)) {
                 Ok(symbol) => Self::find(index, &symbol),
                 Err(fault) => Resolution::Malformed(fault),

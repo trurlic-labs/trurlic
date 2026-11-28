@@ -1,9 +1,13 @@
 //! Reading an index's entry back, taking nothing on trust.
 
 use crate::code::index::file::{
-    Definition, FileIndex, FileKind, IndexFault, Indexed, ModuleFile, RustFacts,
+    Definition, Doc, FileIndex, FileKind, IndexFault, Indexed, ModuleFile, RustFacts,
 };
-use crate::code::index::kinds::{DefinitionKind, Role, Visibility};
+use crate::code::index::import::{Before, Binds, Import, ImportKind, PathStep};
+use crate::code::index::kinds::{DefinitionKind, Role, SelfType, Visibility};
+use crate::code::index::manifest::{
+    Dependency, DependencyKind, DependencySource, Manifest, Package, Workspace, WorkspaceDependency,
+};
 use crate::code::index::scope::{MAX_NESTING, Scope, ScopeId};
 use crate::code::index::span::{Span, SpanHash};
 use crate::code::index::symbol::Segment;
@@ -11,7 +15,8 @@ use crate::code::index::symbol::Segment;
 use super::room::{DEPTH_BYTES, block, max_entry_bytes};
 
 /// The index `bytes` hold for a file of `kind` of `source_bytes` bytes;
-/// `None` when they are no encoding of one. A read charges each heap
+/// `None` when they are no encoding of one, or an index of a file past
+/// its kind's size, which has a fault alone. A read charges each heap
 /// block before it allocates it, as the allocator takes it ([`block`]),
 /// against what [`max_entry_bytes`] leaves past the entry's own bytes.
 /// An entry past that is no index. So every entry a write makes reads
@@ -20,7 +25,7 @@ use super::room::{DEPTH_BYTES, block, max_entry_bytes};
 pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Option<Indexed> {
     let mut reader = Reader::new(bytes, max_entry_bytes(kind, source_bytes))?;
     let indexed = match reader.byte()? {
-        0 => Ok(reader.index()?),
+        0 if source_bytes <= kind.max_bytes() => Ok(reader.index()?),
         1 => Err(IndexFault::NotUtf8 {
             at: reader.number()?,
         }),
@@ -46,6 +51,18 @@ pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Optio
 /// writes it.
 fn role_of(code: u8) -> Option<Role> {
     [Role::Code, Role::Test].get(usize::from(code)).copied()
+}
+
+/// The self type of a definition of `kind` whose code is `code`, as
+/// [`self_type_code`](super::codes::self_type_code) writes it: one for a
+/// trait impl, none for every other kind; `None` for a code that breaks
+/// that.
+fn self_type_of(kind: DefinitionKind, code: u8) -> Option<Option<SelfType>> {
+    let self_type = match code {
+        0 => None,
+        code => Some(*SelfType::ALL.get(usize::from(code) - 1)?),
+    };
+    (self_type.is_some() == (kind == DefinitionKind::Impl)).then_some(self_type)
 }
 
 /// A reader of an entry's bytes, which charges each heap block a value
@@ -150,27 +167,183 @@ impl<'b> Reader<'b> {
     fn index(&mut self) -> Option<FileIndex> {
         let scopes = self.scopes()?;
         let definitions = self.definitions(scopes.len())?;
-        let count = self.items::<ModuleFile>()?;
-        let mut module_files = Vec::with_capacity(count);
-        for _ in 0..count {
-            module_files.push(self.module_file(scopes.len())?);
-        }
+        let rust = self.rust_facts(scopes.len())?;
+        let code = self.byte()?;
+        let doc = self.doc(code)?;
+        let manifest = match self.byte()? {
+            0 => None,
+            1 => {
+                self.own(size_of::<Manifest>())?;
+                Some(Box::new(self.manifest()?))
+            }
+            _ => return None,
+        };
         Some(FileIndex {
             scopes,
             definitions,
-            rust: RustFacts { module_files },
+            doc,
+            rust,
+            manifest,
         })
+    }
+
+    /// What a Rust file holds besides its definitions, in an index of
+    /// `scopes` scopes: its module files, its steps, each after a step
+    /// below it, its imports, each ending at one of them, and its
+    /// modules that hold a macro invocation as an item.
+    fn rust_facts(&mut self, scopes: usize) -> Option<RustFacts> {
+        let count = self.items::<ModuleFile>()?;
+        let mut module_files = Vec::with_capacity(count);
+        for _ in 0..count {
+            module_files.push(self.module_file(scopes)?);
+        }
+        let count = self.items::<PathStep>()?;
+        let mut steps = Vec::with_capacity(count);
+        for own in 0..count {
+            steps.push(self.step(scopes, own)?);
+        }
+        let count = self.items::<Import>()?;
+        let mut imports = Vec::with_capacity(count);
+        for _ in 0..count {
+            imports.push(self.import(steps.len())?);
+        }
+        let count = self.items::<Option<ScopeId>>()?;
+        let mut macro_modules = Vec::with_capacity(count);
+        for _ in 0..count {
+            let module = self.scope(scopes)?;
+            // Each once, in order, as the walk writes them.
+            if macro_modules.last().is_some_and(|last| *last >= module) {
+                return None;
+            }
+            macro_modules.push(module);
+        }
+        Some(RustFacts {
+            module_files,
+            steps,
+            imports,
+            macro_modules,
+        })
+    }
+
+    /// The step at `own`, in an index of `scopes` scopes.
+    fn step(&mut self, scopes: usize, own: usize) -> Option<PathStep> {
+        let before = match self.byte()? {
+            0 => Before::Start(self.scope(scopes)?),
+            1 => Before::Step(self.number().filter(|at| *at < own)?),
+            _ => return None,
+        };
+        let segment = self.text()?;
+        Some(PathStep { before, segment })
+    }
+
+    /// An import whose last step is one of `steps`.
+    fn import(&mut self, steps: usize) -> Option<Import> {
+        let last = self.number().filter(|at| *at < steps)?;
+        let marks = self.byte()?;
+        let role = role_of(marks & 1)?;
+        let kind = match marks >> 1 {
+            0 => ImportKind::Code,
+            1 => ImportKind::Use(self.binds()?),
+            2 => ImportKind::Reexport(self.binds()?),
+            3 => ImportKind::Unresolvable,
+            _ => return None,
+        };
+        Some(Import { last, role, kind })
+    }
+
+    fn binds(&mut self) -> Option<Binds> {
+        Some(match self.byte()? {
+            0 => Binds::Last,
+            1 => Binds::Alias(self.text()?),
+            2 => Binds::Nothing,
+            3 => Binds::Glob,
+            _ => return None,
+        })
+    }
+
+    /// The doc whose code, as [`doc_code`](super::codes::doc_code) writes
+    /// it, is `code`: `Some(None)` for none, `None` for no code or a text
+    /// no [`Doc`] holds.
+    fn doc(&mut self, code: u8) -> Option<Option<Doc>> {
+        let cut = match code {
+            0 => return Some(None),
+            1 => false,
+            2 => true,
+            _ => return None,
+        };
+        Doc::new(self.text()?, cut).map(Some)
     }
 
     fn module_file(&mut self, scopes: usize) -> Option<ModuleFile> {
         let scope = ScopeId::of(self.number()?).filter(|id| id.at() < scopes)?;
         let role = role_of(self.byte()?)?;
-        let path = match self.byte()? {
+        let path = self.optional_text()?;
+        Some(ModuleFile { scope, role, path })
+    }
+
+    /// A manifest, with a package or a workspace or both.
+    fn manifest(&mut self) -> Option<Manifest> {
+        let package = match self.byte()? {
             0 => None,
-            1 => Some(self.text()?),
+            1 => Some(self.package()?),
             _ => return None,
         };
-        Some(ModuleFile { scope, role, path })
+        let workspace = match self.byte()? {
+            0 => None,
+            1 => Some(self.workspace()?),
+            _ => return None,
+        };
+        (package.is_some() || workspace.is_some()).then_some(Manifest { package, workspace })
+    }
+
+    fn package(&mut self) -> Option<Package> {
+        let name = self.optional_text()?;
+        let workspace = self.optional_text()?;
+        let count = self.items::<Dependency>()?;
+        let mut dependencies = Vec::with_capacity(count);
+        for _ in 0..count {
+            let kind = *DependencyKind::ALL.get(usize::from(self.byte()?))?;
+            let source = match self.byte()? {
+                0 => DependencySource::Path(self.text()?),
+                1 => DependencySource::Workspace(self.text()?),
+                _ => return None,
+            };
+            dependencies.push(Dependency { kind, source });
+        }
+        Some(Package {
+            name,
+            workspace,
+            dependencies,
+        })
+    }
+
+    fn workspace(&mut self) -> Option<Workspace> {
+        let count = self.items::<WorkspaceDependency>()?;
+        let mut dependencies = Vec::with_capacity(count);
+        for _ in 0..count {
+            dependencies.push(WorkspaceDependency {
+                name: self.text()?,
+                path: self.optional_text()?,
+            });
+        }
+        let count = self.items::<String>()?;
+        let mut exclude = Vec::with_capacity(count);
+        for _ in 0..count {
+            exclude.push(self.text()?);
+        }
+        Some(Workspace {
+            dependencies,
+            exclude,
+        })
+    }
+
+    /// An optional text: a byte 0 for none, else 1 and the text.
+    fn optional_text(&mut self) -> Option<Option<String>> {
+        match self.byte()? {
+            0 => Some(None),
+            1 => self.text().map(Some),
+            _ => None,
+        }
     }
 
     /// The scopes, each parent below its child, of one segment at least,
@@ -208,7 +381,7 @@ impl<'b> Reader<'b> {
             let kind = self.kind()?;
             let marks = self.byte()?;
             let role = role_of(marks & 1)?;
-            let visibility = match marks >> 1 {
+            let visibility = match (marks >> 1) & 0b111 {
                 0 => None,
                 code => Some(*Visibility::ALL.get(usize::from(code) - 1)?),
             };
@@ -217,6 +390,8 @@ impl<'b> Reader<'b> {
                 1 => definitions.last().map(|last| (last.span, last.hash))?,
                 _ => return None,
             };
+            let self_type = self_type_of(kind, marks >> 6)?;
+            let doc = self.doc((marks >> 4) & 0b11)?;
             definitions.push(Definition {
                 scope,
                 kind,
@@ -224,6 +399,8 @@ impl<'b> Reader<'b> {
                 hash,
                 role,
                 visibility,
+                doc,
+                self_type,
             });
         }
         Some(definitions)

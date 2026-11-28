@@ -13,10 +13,11 @@ store      → git                         graph files: schema, canonical form, 
                                          quality rules, apply, commit/journal/recovery, lock,
                                          migrations, a shared graph's history
 tools      → store, lint, sources,       the tools, known to no surface: specs (schema = parser),
-             budget, discovery           `apply`, `status`, the hand-written tools, registry, result cap
+             budget, discovery           `apply`, `status`, `map` (listed by no MCP client), the
+                                         hand-written tools, registry, result cap
 mcp        → tools, budget               JSON-RPC stdio server: protocol, client, envelope, `tools/list`
-commands   → store, tools, mcp (serve),  init, apply, status, query, check, fmt, migrate, install, serve
-             sources, lint, git,
+commands   → store, tools, mcp (serve),  init, apply, status, map, query, check, fmt, migrate,
+             sources, lint, git,         install, serve
              discovery, budget
 cli        → commands, store, tools      clap definitions and dispatch
 discovery  → store, git                  graph and code root from the calling directory
@@ -25,23 +26,27 @@ lint       → store, code                 pure findings over the graph that ref
                                          decisions with file anchors only, anchor findings and
                                          their repairs
 sources    → code, lint, store, git      code-root walk, bounded reads, index cache, other worktrees,
-                                         the anchor findings of `check` and `status`
+                                         the anchor findings of `check` and `status`, a level of the
+                                         code tree, a file's frame and a search for `map`
 code       → store (types)               pure code index: its values (`index/`), resolvers (`parse/`,
-                                         `lexical/`), facts over a whole tree (`facts/`)
+                                         `lexical/`) and the one reader of Rust paths, facts over a
+                                         whole tree (`facts/`): places, crates, imports, a level
+                                         and a node's address, a file's frame, a search
 git        → —                           `git` as a child process; `git::graph` = the graph's own repo
 budget     → —                           a tool call's byte limits, fitting output into a byte budget
 error      → store (types)               `Error`, `Result`
 console    → —                           `out!` (stdout), `diag!` (stderr)
 failpoint  → console                     the named sites a test aborts, pauses, fails or panics at
                                          (`failpoints` feature): store, `apply`, the MCP server
-bench      → mcp, store, sources,        what `benches/` drive (`bench` feature, inline in `lib.rs`)
+bench      → mcp, store, sources,        what `benches/` drive (`bench` feature, `bench.rs`)
              code, lint
 purity     → code (tests only)           what a module's non-test code may name: `code`'s and `lint`'s
                                          allow lists, the order of `code`'s and `store`'s parts, every
-                                         module's arrow and re-exports (`lib.rs`)
+                                         module's arrow and re-exports (`lib.rs`), read through `code`'s
+                                         one reader of Rust paths; the macros non-test code may define
 ```
 
-`error` is used by every module but `code`, `lint`, `budget` and `failpoint`; `console` by `store`, `tools`, `mcp`, `commands`, `cli`, `sources` and `failpoint`.
+`error` is used by every module but `code`, `lint`, `budget`, `failpoint` and `bench`; `console` by `store`, `tools`, `mcp`, `commands`, `cli`, `sources` and `failpoint`.
 
 ### Where things are
 
@@ -59,6 +64,9 @@ purity     → code (tests only)           what a module's non-test code may nam
 | Refusal JSON, result fitting | `tools/result.rs`, `tools/truncate.rs` |
 | Tool registry / its MCP listing and result envelope | `tools/registry.rs` / `mcp/listing.rs`, `mcp/envelope.rs` |
 | Tools written by hand (`get_context`, `get_decisions_for_file`) | `tools/handwritten/` |
+| The code tree a level at a time: a node's address / a level's files, sums, edges and anchors / its values with the decisions / `map`'s pages and `trurlic map --json` | `code/facts/address.rs` / `code/facts/level.rs` / `sources/level.rs` / `tools/map/`, `commands/map.rs` |
+| A file's frame: its definitions and impls by name / where anchors lie in its lines / its values with the decisions / its pages | `code/facts/frame.rs` / `code/facts/coverage.rs` / `sources/frame.rs` / `tools/map/frame.rs` |
+| A search of the tree's paths: the one rank / the query / its pages | `code/facts/search.rs` / `sources/search.rs` / `tools/map/search.rs` |
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/index/work.rs` / `code/index/encoding/` |
 | Rust tokens no span hash holds (rustfmt's commas and braces) | `code/parse/rust/silent.rs` |
@@ -72,6 +80,10 @@ purity     → code (tests only)           what a module's non-test code may nam
 | A language beyond Rust: grammar, query, test places, pre-parse bounds | `code/parse/language/row.rs`, `code/parse/language/<name>.scm`, `code/parse/language/<name>.rs` |
 | C and C++ macros blanked before the parse: the per-file pass / the sets / the headers gathered and the passes cached | `code/parse/language/c_family/define.rs`, `blank.rs` / `c_family/set.rs` / `sources/reads.rs`, `sources/lexical.rs` |
 | Span-hash units and hashing | `code/parse/units/` |
+| The one reader of Rust paths / a file's imports in its index, where a name may be bound anew / their resolution and a level's edges | `code/parse/rust/reading.rs`, `paths.rs` / `code/parse/rust/imports.rs`, `rebinding.rs`, `code/index/import.rs` / `code/facts/imports.rs`, `CodeTree::edges` |
+| What a Cargo manifest states, in a TOML index / read by | `code/index/manifest.rs` / `code/lexical/manifest.rs` |
+| The `mod` walk / a file's place / the crates and their edges / the code tree | `code/facts/walk.rs` / `places.rs` / `crate_graph.rs` / `tree.rs` |
+| A Rust doc's first paragraph / a file's line count, and where a read takes it | `code/parse/rust/docs.rs` / `code/index/span.rs` (`line_count`), `sources/source.rs` |
 | Query contract / general resolver | `code/parse/query/` / `code/parse/general/` |
 | Failpoint sites | `failpoint.rs` |
 
@@ -88,7 +100,7 @@ purity     → code (tests only)           what a module's non-test code may nam
 9. A load fails only on an unreadable file; everything else is a validation issue (`check` fails, reads still answer).
 10. Every tool result fits 24 KiB (`budget::MAX_TOOL_RESULT_BYTES`) as valid JSON; cuts are named in `truncated`. Every refusal is an `isError` result `{"error": {"kind", ...}}`; JSON-RPC errors only for malformed messages, unknown methods/tools, panics.
 11. A panic in a request is answered `-32603` and the server keeps serving (`panic = "unwind"`, one `catch_unwind` in `mcp::Server::answer`).
-12. Every module's non-test code names only what its arrow of the module map reaches and re-exports nothing of another module, `code` and `lint` only what their allow lists hold (`purity/`, read by the tests of `lib.rs`, `code`, `lint` and `store`; `purity/mod.rs` states what they cannot see). `code`'s cache (`.state/symbols/`) is never authoritative; a bad entry is a miss.
+12. Every module's non-test code names only what its arrow of the module map reaches and re-exports nothing of another module, `code` and `lint` only what their allow lists hold; it defines no `macro_rules!` but those `purity` lists, each with its reason (`purity/`, read by the tests of `lib.rs`, `code`, `lint` and `store`; `purity/mod.rs` states what they cannot see). `code`'s cache (`.state/symbols/`) is never authoritative; a bad entry is a miss.
 13. A change to what an index holds raises `code::INDEX_FORMAT` (the fingerprint test says when).
 14. The store asks git nothing about the project's repository; `commands` gathers those facts and passes them as data.
 15. Every dependency justified; no runtime proc macros.
@@ -125,6 +137,7 @@ purity     → code (tests only)           what a module's non-test code may nam
 - Failpoints: `TRURLIC_FAILPOINT=<site>:<n>` (`TRURLIC_FAILPOINT_PAUSE` to pause instead of abort).
 - Format fixtures: `tests/fixtures/formats/<version>/`, each migrated, loaded and checked.
 - Code fixtures: `tests/fixtures/code/`; manifests are named `Cargo.toml.fixture`.
+- Places fixture: `tests/fixtures/places.txt`, each Rust file of this crate's own targets (`src/`, `benches/`, `tests/` but `tests/fixtures/`) with its crate and module, checked by hand: a Rust file added or moved there changes it.
 - Prose fixture: `tests/fixtures/prose/`, fixed English decision text the `[quality]` caches are sized on.
 - Seeded corpus (`store::corpus`, `store::corpus::seeded`) feeds property tests and benches.
 - No test for coverage: each asserts a property someone could break.

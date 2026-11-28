@@ -1,6 +1,8 @@
 use super::room::COUNTS_BYTES;
 use super::{Measure, decode, encode, max_entry_bytes};
-use crate::code::index::{FileIndex, FileKind, IndexFault};
+use crate::code::index::{
+    DefinitionKind, FileIndex, FileKind, IndexFault, MAX_DOC_BYTES, SelfType,
+};
 
 /// Every file of the fixture corpus and of `src/code`, with its kind
 /// and bytes.
@@ -133,13 +135,42 @@ fn the_densest_file_of_each_kind_is_indexed_within_its_room() {
     }
 }
 
+/// A manifest that states each fact a manifest's entry holds.
+const MANIFEST: &str = "\
+[package]
+name = 'a'
+workspace = '..'
+[dependencies]
+b = { path = '../b' }
+c = { workspace = true }
+[workspace]
+exclude = ['old']
+[workspace.dependencies]
+d = { path = 'd' }
+e = '1'
+";
+
 #[test]
 fn every_entry_a_write_makes_reads_back() {
     let variants = format!("enum E {{ {} }}", "A, ".repeat(5_000));
     let names = format!("{}z = 0\n", "a,".repeat(50_000));
+    let long = "a ".repeat(1_000);
+    let docs =
+        format!("//! {long}\n/** {long} */\nfn f() {{}}\n/// b\nstruct S {{ /// c\n d: u8 }}");
     let cases = [
         ("variants".to_owned(), FileKind::Rust, variants.into_bytes()),
         ("names".to_owned(), FileKind::Python, names.into_bytes()),
+        (
+            "manifest".to_owned(),
+            FileKind::Toml,
+            MANIFEST.as_bytes().to_vec(),
+        ),
+        (
+            "virtual".to_owned(),
+            FileKind::Toml,
+            b"[workspace]\n".to_vec(),
+        ),
+        ("docs".to_owned(), FileKind::Rust, docs.into_bytes()),
     ];
     for (name, kind, bytes) in &cases {
         let indexed = crate::code::testing::index(*kind, bytes);
@@ -182,13 +213,23 @@ fn every_entry_a_write_makes_reads_back() {
 
 #[test]
 fn bytes_that_break_the_form_are_no_index() {
-    let indexed = crate::code::testing::index(FileKind::Rust, b"mod a { fn b() {} }").unwrap();
+    let text =
+        b"//! F.\nmod a { /// B.\nfn b() {} }\nuse crate::a::{b as c, *};\npub use self::a::b;\n";
+    let indexed = crate::code::testing::index(FileKind::Rust, text).unwrap();
     let bytes = encode(&Ok(indexed));
 
-    let source = 19;
+    let source = text.len();
     let decoded = |bytes: &[u8]| decode(bytes, FileKind::Rust, source);
     for cut in 0..bytes.len() {
         assert_eq!(decoded(&bytes[..cut]), None, "cut at {cut}");
+    }
+    let manifest = encode(&crate::code::testing::index(
+        FileKind::Toml,
+        MANIFEST.as_bytes(),
+    ));
+    for cut in 0..manifest.len() {
+        let decoded = decode(&manifest[..cut], FileKind::Toml, MANIFEST.len());
+        assert_eq!(decoded, None, "manifest cut at {cut}");
     }
     let mut longer = bytes.clone();
     longer.push(0);
@@ -201,8 +242,110 @@ fn bytes_that_break_the_form_are_no_index() {
     assert_eq!(decoded(&[9]), None);
 }
 
+#[test]
+fn a_step_reads_back_only_after_a_step_below_it_and_an_import_only_at_a_step() {
+    let decoded = |bytes: &[u8]| decode(bytes, FileKind::Rust, 64);
+    // No scope, definition or module file; one step `a` that starts a
+    // path, one import of it in code; no macro module, doc or manifest.
+    let whole = [0, 0, 0, 0, 1, 0, 0, 1, b'a', 1, 0, 0, 0, 0, 0];
+    let Some(Ok(index)) = decoded(&whole) else {
+        panic!("a step and its import are an index");
+    };
+    assert_eq!(index.rust.imports.len(), 1);
+
+    let mut after_itself = whole;
+    after_itself[5..7].copy_from_slice(&[1, 0]);
+    let mut past_the_steps = whole;
+    past_the_steps[10] = 1;
+    let mut no_kind = whole;
+    no_kind[11] = 4 << 1;
+    for broken in [after_itself, past_the_steps, no_kind] {
+        assert_eq!(decoded(&broken), None, "{broken:?}");
+    }
+    // The same import as a `use` leaf, with what it binds.
+    let used = |binds: u8| [0, 0, 0, 0, 1, 0, 0, 1, b'a', 1, 0, 1 << 1, binds, 0, 0, 0];
+    assert!(matches!(decoded(&used(0)), Some(Ok(_))));
+    assert_eq!(decoded(&used(4)), None);
+    // The file's own module as holding a macro invocation, once and twice.
+    let macros = |modules: &[u8]| {
+        let mut entry = vec![0, 0, 0, 0, 0, 0, u8::try_from(modules.len()).unwrap()];
+        entry.extend(modules);
+        entry.extend([0, 0]);
+        decoded(&entry)
+    };
+    let Some(Ok(index)) = macros(&[0]) else {
+        panic!("a macro module is an index");
+    };
+    assert_eq!(index.rust.macro_modules, [None]);
+    assert_eq!(macros(&[0, 0]), None);
+}
+
+#[test]
+fn a_rust_files_imports_are_indexed_within_its_room_however_many_long_or_deep() {
+    let lines = format!("mod a;\n{}", "use a::b;\n".repeat(100_000));
+    let list = format!("use crate::{{{}}};", "a,".repeat(30_000));
+    let names: String = (0..30_000).map(|n| format!("n{n},")).collect();
+    let reexports = format!("pub use crate::{{{names}}};");
+    let depth = 10_000;
+    let nested = format!(
+        "use crate::{{{}}};",
+        "a, b::{".repeat(depth) + &"}".repeat(depth)
+    );
+    let segments = 5_000;
+    let long = format!("fn f() {{ crate{}(); }}", "::a".repeat(segments));
+    for (text, imports, steps) in [
+        (&lines, 100_000, 200_000),
+        (&list, 30_000, 30_001),
+        (&reexports, 30_000, 30_001),
+        // A leaf `a` in each list but the innermost, which is empty.
+        (&nested, depth, 2 * depth),
+        (&long, 1, segments + 1),
+    ] {
+        let indexed = crate::code::testing::index(FileKind::Rust, text.as_bytes());
+        let Ok(index) = &indexed else {
+            panic!("{indexed:?}");
+        };
+        assert_eq!(
+            (index.rust.imports.len(), index.rust.steps.len()),
+            (imports, steps)
+        );
+        let bytes = encode(&indexed);
+        assert!(bytes.len() <= max_entry_bytes(FileKind::Rust, text.len()));
+        assert_eq!(decode(&bytes, FileKind::Rust, text.len()), Some(indexed));
+    }
+}
+
+/// An entry of no scope, definition, module file, step, import, macro
+/// module or manifest, and a file doc of `code` and `text`.
+fn file_doc_entry(code: u8, text: &[u8]) -> Vec<u8> {
+    let length = u16::try_from(text.len()).unwrap();
+    let mut entry = vec![0, 0, 0, 0, 0, 0, 0, code];
+    entry.extend([0x80 | (length & 0x7f) as u8, (length >> 7) as u8]);
+    entry.extend(text);
+    entry.push(0);
+    entry
+}
+
+#[test]
+fn a_doc_reads_back_within_its_bound_and_none_past_it_empty_or_of_no_code() {
+    let source = 4096;
+    let decoded = |bytes: &[u8]| decode(bytes, FileKind::Rust, source);
+    let at_bound = vec![b'a'; MAX_DOC_BYTES];
+    let past = vec![b'a'; MAX_DOC_BYTES + 1];
+
+    let Some(Ok(index)) = decoded(&file_doc_entry(2, &at_bound)) else {
+        panic!("a cut doc at the bound is an index");
+    };
+    let doc = index.doc.unwrap();
+    assert_eq!((doc.text().len(), doc.is_cut()), (MAX_DOC_BYTES, true));
+    assert_eq!(decoded(&file_doc_entry(1, &past)), None);
+    assert_eq!(decoded(&file_doc_entry(1, b"")), None);
+    assert_eq!(decoded(&file_doc_entry(3, b"a")), None);
+    assert_eq!(decoded(&[0, 0, 0, 0, 0, 0, 0, 3, 0]), None);
+}
+
 /// An entry of `scopes` scopes of one segment of a one-byte name each,
-/// and nothing else: five bytes apiece.
+/// and nothing else: five bytes apiece, no doc and no manifest.
 fn forged(scopes: usize) -> Vec<u8> {
     let mut forged = vec![0];
     let mut count = scopes;
@@ -214,7 +357,7 @@ fn forged(scopes: usize) -> Vec<u8> {
     for _ in 0..scopes {
         forged.extend([0, 1, 0, 1, b'a']);
     }
-    forged.extend([0, 0]);
+    forged.extend([0, 0, 0, 0, 0, 0, 0]);
     forged
 }
 
@@ -231,7 +374,7 @@ fn malloc(n: usize) -> usize {
 /// 48-byte segment and one of its one-byte name.
 fn resident(scopes: usize) -> usize {
     let count = (usize::BITS - scopes.leading_zeros()).div_ceil(7).max(1) as usize;
-    let entry = 1 + count + 5 * scopes + 2;
+    let entry = 1 + count + 5 * scopes + 7;
     entry + malloc(scopes * 32) + malloc(scopes * 8) + scopes * (64 + 32)
 }
 
@@ -260,7 +403,7 @@ fn a_file_past_its_kinds_size_reads_back_its_fault_alone() {
         decode(&encode(&fault), FileKind::Rust, size + 1),
         Some(fault)
     );
-    assert_eq!(decode(&forged(1), FileKind::Rust, size + 1), None);
+    assert_eq!(decode(&forged(0), FileKind::Rust, size + 1), None);
 }
 
 /// What [`Measure`] charges for what `index` holds, its counts added:
@@ -289,6 +432,21 @@ fn measured(index: &FileIndex) -> usize {
             .iter()
             .map(Measure::module_file)
             .sum::<usize>()
+        + index.rust.steps.iter().map(Measure::step).sum::<usize>()
+        + index
+            .rust
+            .imports
+            .iter()
+            .map(Measure::import)
+            .sum::<usize>()
+        + index
+            .rust
+            .macro_modules
+            .iter()
+            .map(|module| Measure::macro_module(*module))
+            .sum::<usize>()
+        + index.manifest.as_deref().map_or(0, Measure::manifest)
+        + index.doc.as_ref().map_or(0, Measure::file_doc)
 }
 
 #[test]
@@ -311,6 +469,10 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
     let headings = "# a\n".repeat(25_000);
     let keys = format!("{{{}\"z\":0}}", "\"a\":0,".repeat(20_000));
     let tables: String = (0..10_000).map(|n| format!("[a{n}]\nb=0\n")).collect();
+    let dependencies: String = (0..20_000)
+        .map(|n| format!("a{n}.path=''\nb{n}.workspace=true\n"))
+        .collect();
+    let manifest = format!("[package]\n[dependencies]\n{dependencies}");
     let nested = format!("{}{}", "mod m{".repeat(60), "}".repeat(60));
     let names = format!("{}z = 0\n", "a,".repeat(50_000));
     let lines = "x=1\n".repeat(50_000);
@@ -319,7 +481,21 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
         "a".repeat(100_000),
         "self,".repeat(20_000)
     );
+    // Near the cap: an item with the shortest doc in seven bytes, a
+    // paragraph of a megabyte, a doc past the bound every 600 bytes, and a
+    // file doc of a megabyte.
+    let documented = format!("enum E{{{}}}", "///a\nA,".repeat(149_000));
+    let paragraph = format!(
+        "{}fn f() {{}}",
+        format!("/// {}\n", "a".repeat(95)).repeat(10_000)
+    );
+    let past_bound = format!("/// {}\nfn f() {{}}\n", "a".repeat(580)).repeat(1_700);
+    let file_doc = "//! a\n".repeat(170_000);
     for (kind, text) in [
+        (FileKind::Rust, documented.as_str()),
+        (FileKind::Rust, paragraph.as_str()),
+        (FileKind::Rust, past_bound.as_str()),
+        (FileKind::Rust, file_doc.as_str()),
         (FileKind::Rust, variants.as_str()),
         (FileKind::Rust, fields.as_str()),
         (FileKind::Rust, nested.as_str()),
@@ -328,6 +504,7 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
         (FileKind::Markdown, headings.as_str()),
         (FileKind::Json, keys.as_str()),
         (FileKind::Toml, tables.as_str()),
+        (FileKind::Toml, manifest.as_str()),
         (FileKind::Python, names.as_str()),
         (FileKind::Python, lines.as_str()),
         (FileKind::Rust, ""),
@@ -342,5 +519,70 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
             text.len(),
             bytes.len()
         );
+    }
+}
+
+#[test]
+fn a_trait_impl_reads_back_how_it_writes_its_self_type() {
+    let text = b"impl Display for T {}\nimpl From<T> for std::io::Error {}\n";
+    let indexed = crate::code::testing::index(FileKind::Rust, text);
+
+    let decoded = decode(&encode(&indexed), FileKind::Rust, text.len()).unwrap();
+
+    let written: Vec<Option<SelfType>> = decoded
+        .unwrap()
+        .definitions
+        .iter()
+        .map(|definition| definition.self_type)
+        .collect();
+    assert_eq!(written, [Some(SelfType::Bare), Some(SelfType::Qualified)]);
+}
+
+/// The entry of `text`, a Rust file of one definition, with its marks'
+/// self type bits set to `code`.
+fn with_self_type_code(text: &[u8], code: u8) -> Vec<u8> {
+    let mut index = crate::code::testing::index(FileKind::Rust, text).unwrap();
+    let bare = encode(&Ok(index.clone()));
+    for definition in &mut index.definitions {
+        definition.self_type = match definition.self_type {
+            Some(_) => None,
+            None => Some(SelfType::Qualified),
+        };
+    }
+    let flipped = encode(&Ok(index));
+    let at = (0..bare.len())
+        .find(|&at| bare.get(at) != flipped.get(at))
+        .unwrap();
+    let mut bytes = bare;
+    bytes[at] = bytes[at] & 0b0011_1111 | code << 6;
+    bytes
+}
+
+#[test]
+fn a_self_type_code_past_the_set_or_on_a_kind_with_none_is_no_index() {
+    let decoded = |text: &[u8], code: u8| {
+        decode(&with_self_type_code(text, code), FileKind::Rust, text.len())
+    };
+    let trait_impl: &[u8] = b"impl Display for T {}\n";
+    let function: &[u8] = b"fn f() {}\n";
+    let kinds = |text: &[u8]| {
+        let index = crate::code::testing::index(FileKind::Rust, text).unwrap();
+        index
+            .definitions
+            .iter()
+            .map(|definition| definition.kind)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(kinds(trait_impl), [DefinitionKind::Impl]);
+    assert_eq!(kinds(function), [DefinitionKind::Function]);
+
+    assert!(decoded(trait_impl, 1).is_some());
+    for (text, code) in [
+        (trait_impl, 3),
+        (trait_impl, 0),
+        (function, 1),
+        (function, 2),
+    ] {
+        assert_eq!(decoded(text, code), None, "{code}");
     }
 }

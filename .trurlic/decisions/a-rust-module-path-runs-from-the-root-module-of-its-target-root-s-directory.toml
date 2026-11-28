@@ -1,0 +1,20 @@
+component = "code"
+choice = "A Rust file's module path runs from the root module of its target root's directory, shared by the targets there; a file at no one path is Unresolved with its reason, one no target reaches Unreached"
+reason = "The mod walk of the test roles reaches each file from a target's root, so the same walk gives the module path: the root's directory names the root module, and each declaration adds its inline modules and its name. src/lib.rs and src/main.rs both root src, and a file both declare has one path in each, so one module node holds what both targets see; tests/a.rs and tests/b.rs share tests/common alike. A file at no one path says why instead of choosing one. It may be reached at two, through a second #[path], as a target root another file declares, or from roots of two directories. It may be declared inside a function or another item, whose block module no path names. It may be one of name.rs and name/mod.rs that both stand, which rustc refuses. What it declares is unresolved for the same reason, and it stands in its directory, as an unreached file does. A path is an id of a tree of (parent, segment) pairs, each held once. So a state is an id that rises once, each file is followed at most twice, and the walk is linear however deep the paths run. An inline mod is a segment of the paths below it and a definition of its file, a node only when a file stands below it."
+alternatives = [
+    "A root module per target file: rejected because tests/common/mod.rs, which every test target declares, would be at several modules",
+    "Keep every path a file is reached at: rejected because the paths double through each file a #[path] declares twice, so the walk would be exponential",
+    "Pick the first path in path order: rejected because it states one module where two are true",
+    "An inline mod as a node with its parent's file: rejected because that file would then stand under two module nodes",
+]
+status = "proposed"
+origin = "a file's place and the crates in the code index"
+created = "2026-11-27T21:24:16.080164756Z"
+anchors = [
+    { file = "src/code/facts/places.rs", symbol = "Module" },
+    { file = "src/code/facts/places.rs", symbol = "ModulePaths" },
+    { file = "src/code/facts/places.rs", symbol = "ReachedAt" },
+    { file = "src/code/facts/places.rs", symbol = "Unresolved" },
+    { file = "src/code/facts/walk.rs", symbol = "Reach" },
+    { file = "src/code/facts/walk.rs", symbol = "walk" },
+]

@@ -189,7 +189,7 @@ mod tests {
     fn hash(text: &str) -> SpanHash {
         let tree = parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap();
         let silent = silent_tokens(tree.root_node());
-        let leaves = Leaves::of(&tree, text, &LEXICON, &silent);
+        let leaves = Leaves::of(&tree, (text, &LEXICON), &silent, |_| {});
         let units = leaves.within(&(0..text.len()));
         leaves.hash_each(text, std::slice::from_ref(&units))[0]
     }

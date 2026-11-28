@@ -1,11 +1,16 @@
 //! The one way into an index: every resolver enters its scopes and
-//! admits its definitions and module files through the scope tree, which
-//! charges each what its entry costs against the room of the file
-//! ([`encoding::room_of`]), so no rule of any resolver can make an index
-//! outgrow its file, and refuses a path past [`MAX_NESTING`] segments.
+//! admits its definitions, with their docs, its module files, its
+//! imports and their steps, its file's doc and its manifest through the
+//! scope tree, which charges each what its entry costs against the room
+//! of the file ([`encoding::room_of`]), so no rule of any resolver can
+//! make an index outgrow its file, and refuses a scope whose path runs
+//! past [`MAX_NESTING`] segments. An import's path is bounded by the room
+//! alone.
 
 use super::encoding::{self, Measure};
-use super::file::{Definition, FileKind, IndexFault, ModuleFile};
+use super::file::{Definition, Doc, FileKind, IndexFault, ModuleFile};
+use super::import::{Import, PathStep};
+use super::manifest::Manifest;
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::Span;
 use super::symbol::Segment;
@@ -70,6 +75,32 @@ impl ScopeTree {
         self.charge(Measure::module_file(module))
     }
 
+    pub(in crate::code) fn admit_manifest(
+        &mut self,
+        manifest: &Manifest,
+    ) -> Result<(), IndexFault> {
+        self.charge(Measure::manifest(manifest))
+    }
+
+    pub(in crate::code) fn admit_file_doc(&mut self, doc: &Doc) -> Result<(), IndexFault> {
+        self.charge(Measure::file_doc(doc))
+    }
+
+    pub(in crate::code) fn admit_step(&mut self, step: &PathStep) -> Result<(), IndexFault> {
+        self.charge(Measure::step(step))
+    }
+
+    pub(in crate::code) fn admit_macro_module(
+        &mut self,
+        module: Option<ScopeId>,
+    ) -> Result<(), IndexFault> {
+        self.charge(Measure::macro_module(module))
+    }
+
+    pub(in crate::code) fn admit_import(&mut self, import: &Import) -> Result<(), IndexFault> {
+        self.charge(Measure::import(import))
+    }
+
     fn charge(&mut self, bytes: usize) -> Result<(), IndexFault> {
         self.room = self.room.checked_sub(bytes).ok_or(IndexFault::TooComplex)?;
         Ok(())
@@ -123,5 +154,27 @@ mod tests {
             Err(IndexFault::TooComplex)
         );
         assert!(tree.enter(None, vec![Segment::name("n")]).is_ok());
+    }
+
+    #[test]
+    fn a_manifest_past_the_files_room_is_refused() {
+        let manifest = |path: &str| Manifest {
+            package: None,
+            workspace: Some(crate::code::index::Workspace {
+                dependencies: Vec::new(),
+                exclude: vec![path.to_owned()],
+            }),
+        };
+        let room = encoding::room_of(FileKind::Toml, 2);
+
+        assert_eq!(
+            ScopeTree::for_file(FileKind::Toml, 2).admit_manifest(&manifest(&"p".repeat(room))),
+            Err(IndexFault::TooComplex)
+        );
+        assert!(
+            ScopeTree::for_file(FileKind::Toml, 2)
+                .admit_manifest(&manifest("p"))
+                .is_ok()
+        );
     }
 }

@@ -8,7 +8,8 @@ use super::findings::{checked_findings, tree_findings};
 use super::reads::{Reads, Scope, read_paths, read_tree};
 use super::repair::{Seen, still_holding};
 use super::source::MAX_SOURCE_FILE_BYTES;
-use crate::code::{CodeFacts, FileKind, Resolution, SpanHash, Target};
+use crate::code::{CodeFacts, CodeTree, Entry, FileKind, Node, Resolution, SpanHash, Target};
+use crate::store::corpus::Corpus;
 use crate::store::testing::setup_store;
 use crate::store::{Anchor, Store, SymbolsKey};
 
@@ -614,6 +615,54 @@ fn a_warm_index_reads_the_cache_and_answers_as_a_cold_one() {
     assert_eq!(entries(&store), written);
 }
 
+/// The line count and the index fault of each file of the tree at
+/// `store`'s code root and of `anchored`, the cache filled as a call
+/// fills it.
+fn lines(store: &Store, anchored: &[&str]) -> BTreeMap<String, (Option<usize>, Option<String>)> {
+    let mut reads = Reads::of_tree(store);
+    let anchored = anchored.iter().copied();
+    let (found, _) = read_tree(store, store.code_root(), Scope::Tree, anchored, &mut reads);
+    reads.write(store);
+    found
+        .into_iter()
+        .filter_map(|(path, entry)| match entry {
+            Entry::File { lines, index, .. } => {
+                Some((path, (lines, index.err().map(|fault| fault.to_string()))))
+            }
+            Entry::Directory | Entry::Unindexed => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_file_read_has_its_line_count_cold_and_warm_refused_or_not_and_one_unread_has_none() {
+    let (tmp, store) = tree_of(&[("final.rs", "fn a() {}\nfn b() {}\n"), ("empty.rs", "")]);
+    fs::write(tmp.path().join("bytes.rs"), b"fn a() {}\n\xff\n").unwrap();
+    let big = File::create(tmp.path().join("big.json")).unwrap();
+    big.set_len(MAX_SOURCE_FILE_BYTES + 1).unwrap();
+    let read = |count| (Some(count), None);
+    let expected = BTreeMap::from([
+        (
+            "big.json".to_owned(),
+            (
+                None,
+                Some("is 4194305 bytes, over the 4194304 a source file may hold".to_owned()),
+            ),
+        ),
+        (
+            "bytes.rs".to_owned(),
+            (Some(2), Some("is not UTF-8 from byte 10".to_owned())),
+        ),
+        ("empty.rs".to_owned(), read(0)),
+        ("final.rs".to_owned(), read(2)),
+    ]);
+
+    let cold = lines(&store, &["big.json"]);
+    assert_eq!(cold, expected);
+    assert!(!entries(&store).is_empty());
+    assert_eq!(lines(&store, &["big.json"]), cold);
+}
+
 #[test]
 fn an_entry_that_is_not_what_its_key_says_is_a_miss_and_is_replaced() {
     let (_tmp, store) = fixture_tree();
@@ -772,6 +821,9 @@ fn statements(facts: &CodeFacts) -> Vec<String> {
 const STATEMENTS: &[&str] = &[
     "Cargo.toml workspace Key Code -",
     "Cargo.toml workspace::members Key Code -",
+    "Cargo.toml workspace::dependencies Key Code -",
+    "Cargo.toml workspace::dependencies::ledger Key Code -",
+    "Cargo.toml workspace::dependencies::ledger::path Key Code -",
     "Cargo.toml workspace::lints::clippy Key Code -",
     "Cargo.toml workspace::lints Key Code -",
     "Cargo.toml workspace::lints::clippy::unwrap_used Key Code -",
@@ -963,6 +1015,16 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/books/mod.rs Imported Struct Code Public",
     "crates/ledger/src/books/mod.rs call_only Function Code Public",
     "crates/ledger/src/checks.rs balanced Function Test Public",
+    "crates/ledger/src/docs.rs Journal Struct Code Public",
+    "crates/ledger/src/docs.rs Journal::entries Field Code Public",
+    "crates/ledger/src/docs.rs Journal::count Field Code Private",
+    "crates/ledger/src/docs.rs Balance Enum Code Public",
+    "crates/ledger/src/docs.rs Balance::Even Variant Code Public",
+    "crates/ledger/src/docs.rs Balance::Owed Variant Code Public",
+    "crates/ledger/src/docs.rs audit Function Code Public",
+    "crates/ledger/src/docs.rs undocumented Function Code Public",
+    "crates/ledger/src/docs.rs verbose Function Code Public",
+    "crates/ledger/src/docs.rs terms Module Code Public",
     "crates/ledger/src/lib.rs PAGE_SIZE Constant Code Public",
     "crates/ledger/src/lib.rs OPENED Static Code Private",
     "crates/ledger/src/lib.rs page_count Function Code Crate",
@@ -1003,6 +1065,7 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/lib.rs Book::<Audit>::audit Method Code -",
     "crates/ledger/src/lib.rs Book::close Method Code Public",
     "crates/ledger/src/lib.rs books Module Code Public",
+    "crates/ledger/src/lib.rs docs Module Code Private",
     "crates/ledger/src/lib.rs marks Module Code Private",
     "crates/ledger/src/lib.rs rules Module Code Private",
     "crates/ledger/src/lib.rs checks Module Test Private",
@@ -1053,6 +1116,22 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules/in_body.rs reached_by_test Function Test Public",
     "crates/ledger/tests/flow.rs opened_book Function Test Private",
     "crates/ledger/tests/flow.rs a_book_opens Function Test Private",
+    "crates/shelf/Cargo.toml package Key Code -",
+    "crates/shelf/Cargo.toml package::name Key Code -",
+    "crates/shelf/Cargo.toml dependencies Key Code -",
+    "crates/shelf/Cargo.toml dependencies::ledger Key Code -",
+    "crates/shelf/Cargo.toml dependencies::ledger::workspace Key Code -",
+    "crates/shelf/Cargo.toml dev-dependencies Key Code -",
+    "crates/shelf/Cargo.toml dev-dependencies::tally Key Code -",
+    "crates/shelf/Cargo.toml dev-dependencies::tally::path Key Code -",
+    "crates/tally/Cargo.toml package Key Code -",
+    "crates/tally/Cargo.toml package::name Key Code -",
+    "crates/tally/Cargo.toml dependencies Key Code -",
+    "crates/tally/Cargo.toml dependencies::ledger Key Code -",
+    "crates/tally/Cargo.toml dependencies::ledger::path Key Code -",
+    "crates/tally/Cargo.toml build-dependencies Key Code -",
+    "crates/tally/Cargo.toml build-dependencies::stamp Key Code -",
+    "crates/tally/Cargo.toml build-dependencies::stamp::path Key Code -",
     "docs/guide.md Guide Heading Code -",
     "docs/guide.md Guide::Install Heading Code -",
     "docs/guide.md Guide::Install::From source Heading Code -",
@@ -1524,4 +1603,137 @@ fn an_edit_of_a_header_indexes_anew_exactly_the_files_whose_index_it_changes() {
     for (name, files, edit, want) in edits {
         assert_eq!(after_edit(files, edit), (want, true), "{name}");
     }
+}
+
+/// `node` and every node below it, one a line, each indented one step
+/// past the node that holds it.
+fn subtree<'i>(tree: &CodeTree<'i>, node: Node<'i>, depth: usize) -> Vec<String> {
+    let mut lines = vec![format!(
+        "{}{}",
+        "  ".repeat(depth),
+        tree.spelled_node(&node)
+    )];
+    for child in tree.children(Some(node)) {
+        lines.extend(subtree(tree, *child, depth + 1));
+    }
+    lines
+}
+
+#[test]
+fn the_crates_of_the_fixture_workspace_are_its_manifests_with_their_edges() {
+    let (_tmp, store) = fixture_tree();
+    let facts = gather(&store, std::iter::empty());
+    let tree = CodeTree::of(&facts);
+    let crates: Vec<String> = tree
+        .children(None)
+        .iter()
+        .map(|node| match node {
+            Node::Crate(Some(dir)) => tree.spelled_crate(dir),
+            other => tree.spelled_node(other),
+        })
+        .collect();
+
+    assert_eq!(
+        crates,
+        [
+            " None: ",
+            "crates/ledger Some(\"ledger\"): ",
+            "crates/shelf Some(\"shelf\"): \
+             Normal Crate(\"crates/ledger\"), Dev Crate(\"crates/tally\")",
+            "crates/tally Some(\"tally\"): \
+             Normal Crate(\"crates/ledger\"), Build Unwalked(\"../../../stamp\")",
+        ]
+    );
+}
+
+#[test]
+fn a_python_and_a_c_tree_are_their_directory_trees() {
+    let (_tmp, store) = fixture_tree();
+    let facts = gather(&store, std::iter::empty());
+    let tree = CodeTree::of(&facts);
+    let directory = |dir| Node::Directory {
+        crate_dir: Some(""),
+        dir,
+    };
+
+    assert_eq!(
+        subtree(&tree, directory("python"), 0),
+        [
+            "directory python",
+            "  directory python/tests",
+            "    file python/tests/builders.py",
+            "  file python/checks.py",
+            "  file python/conftest.py",
+            "  file python/gui.pyw",
+            "  file python/shelf.py",
+            "  file python/shelf.pyi",
+            "  file python/test_shelf.py",
+        ]
+    );
+    assert_eq!(
+        subtree(&tree, directory("c"), 0),
+        [
+            "directory c",
+            "  directory c/tests",
+            "    file c/tests/shelf_check.c",
+            "  file c/shelf.c",
+            "  file c/shelf.h",
+        ]
+    );
+}
+
+/// Each Rust file of this crate's own targets, under `src/`, `benches/`
+/// and `tests/` but for `tests/fixtures/`, with its place, checked by
+/// hand: one a line, sorted by path.
+const PLACES: &str = include_str!("../../tests/fixtures/places.txt");
+
+/// Whether the file at `path` is a Rust file of this crate's own targets.
+fn is_own_rust(path: &str) -> bool {
+    let own = ["src/", "benches/", "tests/"]
+        .iter()
+        .any(|dir| path.starts_with(dir));
+    own && !path.starts_with("tests/fixtures/") && path.ends_with(".rs")
+}
+
+#[test]
+fn each_rust_file_of_this_crate_is_at_its_hand_checked_place() {
+    let (facts, walked) = super::testing::this_repository();
+    let tree = CodeTree::of(facts);
+    let found: BTreeSet<String> = walked
+        .iter()
+        .filter(|path| is_own_rust(path))
+        .map(|path| format!("{path}: {}", tree.spelled_place(path)))
+        .collect();
+    let expected: BTreeSet<String> = PLACES.lines().map(str::to_owned).collect();
+
+    let missing: Vec<&String> = expected.difference(&found).collect();
+    let extra: Vec<&String> = found.difference(&expected).collect();
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "places listed but not found: {missing:#?}\nplaces found but not listed: {extra:#?}"
+    );
+}
+
+/// The source tree a corpus writes is one crate at the code root, whose
+/// `mod` declarations reach each of its Rust files, a suffixed
+/// component's through its `#[path]` included.
+#[test]
+fn every_rust_file_of_the_corpus_tree_is_a_module_of_its_one_crate() {
+    let tmp = TempDir::new().unwrap();
+    let store = Corpus::new(Corpus::SIZES[2]).write(tmp.path()).unwrap();
+    let mut reads = Reads::of_tree(&store);
+    let anchored = std::iter::empty();
+    let (entries, walked) = read_tree(&store, store.code_root(), Scope::Tree, anchored, &mut reads);
+    // clone: the facts own the walked set, and the test iterates it after.
+    let facts = CodeFacts::new(entries, walked.clone());
+    let tree = CodeTree::of(&facts);
+
+    let elsewhere: Vec<String> = walked
+        .iter()
+        .filter(|path| path.ends_with(".rs"))
+        .map(|path| format!("{path}: {}", tree.spelled_place(path)))
+        .filter(|place| !place.contains(": . src > "))
+        .collect();
+
+    assert_eq!(elsewhere, Vec::<String>::new());
 }

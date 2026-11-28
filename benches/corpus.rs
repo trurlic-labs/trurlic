@@ -13,10 +13,23 @@
 //! with it whole, which judges the limits alone, and with its `lint`
 //! section alone, which compiles the patterns and judges them too.
 //!
-//! The code index is timed over this repository's own `src/`, cold (its
-//! cache emptied before each run) and warm (every file's index read from
-//! the cache): the anchor findings of the smallest corpus walk, read and
-//! index the whole tree, as `status` and `check` do.
+//! `code_index` times the code index alone: the anchor findings of each
+//! corpus as `status` gathers them. They walk, read and index the crate
+//! the corpus writes and run no git. Each size is timed cold, the cache
+//! emptied before each run, and warm, every file's index read from the
+//! cache.
+//!
+//! `check_git` times `check`'s anchor findings, the index warm, over a
+//! repository the bench builds from the smallest corpus: two commits and a
+//! linked worktree. The bench's git makes them in an empty environment,
+//! with a fixed identity and date. `check` reads that worktree and that
+//! history, and setup panics unless some anchors come out pending and some
+//! repaired. The git `check` runs reads the configuration the environment
+//! names: `make bench` names none, and a run outside it reads the user's.
+//!
+//! Neither group reads the tree the bench is built in, so two builds of
+//! one commit time the same work, whatever that tree's history, untracked
+//! files or worktrees.
 //!
 //! Read tools come from `tools/list`, so a new one is never skipped: setup
 //! panics until a request here fits it.
@@ -32,6 +45,7 @@
 use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
+use std::env;
 use std::fs;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
@@ -45,7 +59,10 @@ use criterion::{
 };
 use serde_json::{Value, json};
 
-use trurlic::bench::{Corpus, Placement, ProjectState, Server, Store, likely_duplicates};
+use trurlic::bench::{
+    Corpus, Placement, ProjectState, Server, Store, checked_findings, likely_duplicates,
+    tree_findings,
+};
 
 /// The example `[quality]` table the repository ships.
 const QUALITY: &str = include_str!("../examples/quality.toml");
@@ -55,6 +72,16 @@ fn add_quality(store: &Store) {
     let path = store.root().join("project.toml");
     let text = fs::read_to_string(&path).unwrap();
     fs::write(&path, format!("{text}\n{QUALITY}")).unwrap();
+}
+
+/// The directory `name` under `CARGO_TARGET_TMPDIR`, emptied of what an
+/// earlier run left there; not created.
+fn fresh_dir(name: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    if dir.exists() {
+        fs::remove_dir_all(&dir).unwrap();
+    }
+    dir
 }
 
 /// One corpus per size, written under `target/tmp` once per run.
@@ -80,10 +107,7 @@ struct Targets {
 
 impl Fixture {
     fn write(size: usize) -> Self {
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("corpus-{size}"));
-        if dir.exists() {
-            fs::remove_dir_all(&dir).unwrap();
-        }
+        let dir = fresh_dir(&format!("corpus-{size}"));
         let store = Corpus::new(size).write(&dir).unwrap();
         let targets = Targets::of(&store.load_state().unwrap());
         Self {
@@ -198,11 +222,7 @@ fn bench_load_state(c: &mut Criterion) {
         group.bench_function(BenchmarkId::from_parameter(fixture.size), |b| {
             b.iter(|| fixture.store.load_state().unwrap());
         });
-        let dir =
-            Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("corpus-quality-{}", fixture.size));
-        if dir.exists() {
-            fs::remove_dir_all(&dir).unwrap();
-        }
+        let dir = fresh_dir(&format!("corpus-quality-{}", fixture.size));
         let store = Corpus::new(fixture.size).write(&dir).unwrap();
         add_quality(&store);
         group.bench_function(BenchmarkId::new("quality", fixture.size), |b| {
@@ -242,10 +262,7 @@ fn bench_duplicates(c: &mut Criterion) {
 fn bench_status_lint(c: &mut Criterion) {
     let mut group = c.benchmark_group("status_quality");
     for &size in &Corpus::SIZES {
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("corpus-lint-{size}"));
-        if dir.exists() {
-            fs::remove_dir_all(&dir).unwrap();
-        }
+        let dir = fresh_dir(&format!("corpus-lint-{size}"));
         add_quality(&Corpus::new(size).write(&dir).unwrap());
         let mut server = server_at(dir);
         for (name, arguments) in [("all", json!({})), ("lint", json!({ "section": "lint" }))] {
@@ -301,20 +318,31 @@ impl Before {
     }
 }
 
-/// `git <args>` in the graph directory, reading no user configuration.
-fn graph_git(store: &Store, args: &[&str]) {
+/// The environment of the bench's git but `PATH`: no system or user
+/// configuration, and the author, committer and date of every commit.
+const GIT_ENVIRONMENT: [(&str, &str); 8] = [
+    ("GIT_CONFIG_NOSYSTEM", "1"),
+    ("GIT_CONFIG_GLOBAL", "/dev/null"),
+    ("GIT_AUTHOR_NAME", "bench"),
+    ("GIT_AUTHOR_EMAIL", "bench@bench.invalid"),
+    ("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z"),
+    ("GIT_COMMITTER_NAME", "bench"),
+    ("GIT_COMMITTER_EMAIL", "bench@bench.invalid"),
+    ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
+];
+
+/// `git <args>` in `dir`, in an empty environment but the caller's `PATH`,
+/// which finds git, and [`GIT_ENVIRONMENT`]. So no variable of the caller
+/// points it at another repository, a template or a configuration, and a
+/// commit of the same tree is the same object on every run.
+fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
         .arg("-C")
-        .arg(store.root())
-        .args([
-            "-c",
-            "user.name=bench",
-            "-c",
-            "user.email=bench@bench.invalid",
-        ])
+        .arg(dir)
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_clear()
+        .envs(env::var_os("PATH").map(|path| ("PATH", path)))
+        .envs(GIT_ENVIRONMENT)
         .status()
         .unwrap();
     assert!(status.success(), "git {args:?}");
@@ -325,13 +353,10 @@ fn bench_write(c: &mut Criterion) {
     group.sample_size(20);
     for &size in &Corpus::SIZES[1..] {
         for before in Before::ALL {
-            let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            let dir = fresh_dir(&format!(
                 "corpus-write-{size}-{}",
                 before.name().replace('/', "-")
             ));
-            if dir.exists() {
-                fs::remove_dir_all(&dir).unwrap();
-            }
             let store = Corpus::new(size)
                 .write_as(&dir, before.placement())
                 .unwrap();
@@ -350,7 +375,7 @@ fn bench_write(c: &mut Criterion) {
                 );
                 fs::write(&file, edited).unwrap();
                 if matches!(before, Before::Committed) {
-                    graph_git(&store, &["commit", "--quiet", "--all", "-m", "edit"]);
+                    git(store.root(), &["commit", "--quiet", "--all", "-m", "edit"]);
                 }
                 // The setup's writes reach the disk before the write starts,
                 // so its flushes wait for its own data alone.
@@ -382,11 +407,7 @@ fn bench_apply(c: &mut Criterion) {
     ];
     for &size in &Corpus::SIZES[1..] {
         for (setup, placement, quality) in setups {
-            let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
-                .join(format!("corpus-apply-{size}-{}", setup.replace('+', "-")));
-            if dir.exists() {
-                fs::remove_dir_all(&dir).unwrap();
-            }
+            let dir = fresh_dir(&format!("corpus-apply-{size}-{}", setup.replace('+', "-")));
             let store = Corpus::new(size).write_as(&dir, placement).unwrap();
             if quality {
                 add_quality(&store);
@@ -431,25 +452,86 @@ fn bench_apply(c: &mut Criterion) {
 
 fn bench_code_index(c: &mut Criterion) {
     let mut group = c.benchmark_group("code_index");
-    let fixture = CORPORA.first().unwrap();
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let store = Store::reached_from(fixture.store.root().to_path_buf(), source);
+    group.sample_size(20);
+    for fixture in CORPORA.iter() {
+        let store = &fixture.store;
+        let state = store.load_state().unwrap();
+        let cache = store.root().join(".state/symbols");
+        group.bench_function(BenchmarkId::new("cold", fixture.size), |b| {
+            b.iter_batched(
+                || {
+                    if cache.exists() {
+                        fs::remove_dir_all(&cache).unwrap();
+                    }
+                },
+                |()| tree_findings(store, &state),
+                BatchSize::PerIteration,
+            );
+        });
+        let _warm = tree_findings(store, &state);
+        group.bench_function(BenchmarkId::new("warm", fixture.size), |b| {
+            b.iter(|| tree_findings(store, &state));
+        });
+    }
+    group.finish();
+}
+
+/// A repository at `repository-<size>/main` under `CARGO_TARGET_TMPDIR`,
+/// whose first commit holds the corpus of `size` decisions but one
+/// anchored file of the second component. A linked worktree at
+/// `repository-<size>/side` forks there, and its own commit adds that
+/// file. On `main`, a second commit moves the first component's sources.
+/// So `check` in `main` follows the moved files through history and finds
+/// the missing one in `side`.
+fn checked_repository(size: usize) -> Store {
+    let dir = fresh_dir(&format!("repository-{size}"));
+    let main = dir.join("main");
+    let store = Corpus::new(size).write(&main).unwrap();
+    fs::write(main.join(".gitignore"), ".trurlic/.state/\n").unwrap();
     let state = store.load_state().unwrap();
-    let cache = store.root().join(".state/symbols");
-    group.bench_function("src/cold", |b| {
-        b.iter_batched(
-            || {
-                if cache.exists() {
-                    fs::remove_dir_all(&cache).unwrap();
-                }
-            },
-            |()| trurlic::bench::anchor_findings(&store, &state),
-            BatchSize::PerIteration,
-        );
-    });
-    let _warm = trurlic::bench::anchor_findings(&store, &state);
-    group.bench_function("src/warm", |b| {
-        b.iter(|| trurlic::bench::anchor_findings(&store, &state));
+    let mut components = state.components.keys();
+    let (moved, held) = (components.next().unwrap(), components.next().unwrap());
+    let anchored: BTreeSet<&str> = state
+        .decisions
+        .values()
+        .flat_map(|decision| &decision.anchors)
+        .map(|anchor| anchor.file())
+        .collect();
+    let pending = anchored
+        .into_iter()
+        .find(|file| file.starts_with(&format!("src/{held}/")))
+        .unwrap();
+    let text = fs::read_to_string(main.join(pending)).unwrap();
+    fs::remove_file(main.join(pending)).unwrap();
+    git(&main, &["init", "--quiet", "--initial-branch=main"]);
+    git(&main, &["add", "--all"]);
+    git(&main, &["commit", "--quiet", "-m", "corpus"]);
+    git(
+        &main,
+        &["worktree", "add", "--quiet", "-b", "side", "../side"],
+    );
+    let side = dir.join("side");
+    fs::write(side.join(pending), text).unwrap();
+    git(&side, &["add", pending]);
+    git(&side, &["commit", "--quiet", "-m", "add"]);
+    let from = format!("src/{moved}");
+    git(&main, &["mv", &from, &format!("{from}-moved")]);
+    git(&main, &["commit", "--quiet", "-m", "move"]);
+    store
+}
+
+fn bench_check_git(c: &mut Criterion) {
+    let mut group = c.benchmark_group("check_git");
+    let size = Corpus::SIZES[0];
+    let store = checked_repository(size);
+    let state = store.load_state().unwrap();
+    let verdicts = checked_findings(&store, &state);
+    assert!(
+        verdicts.repaired > 0 && verdicts.pending > 0,
+        "{verdicts:?}"
+    );
+    group.bench_function(BenchmarkId::from_parameter(size), |b| {
+        b.iter(|| checked_findings(&store, &state));
     });
     group.finish();
 }
@@ -470,6 +552,7 @@ criterion_group! {
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
     targets = bench_load_state, bench_validate, bench_duplicates, bench_status_lint,
-        bench_read_tools, bench_write, bench_apply, bench_code_index, bench_query_compile
+        bench_read_tools, bench_write, bench_apply, bench_code_index, bench_check_git,
+        bench_query_compile
 }
 criterion_main!(benches);

@@ -2,9 +2,10 @@
 //! what it resolves to, with git asked or not, sorted by kind, decision and
 //! anchor.
 
+use crate::code::Resolution;
 use crate::store::{Anchor, Status};
 
-use super::finding::{Checked, Class, Finding, Kind, Unasked, Verdict};
+use super::finding::{Checked, Class, Finding, InTree, Kind, Unasked, Verdict};
 use super::trees::{Asked, Decisions, Here};
 
 /// The files of its kind that define a name, at least, for an anchor whose
@@ -43,6 +44,35 @@ pub(crate) fn unasked<'s>(
     judged(decisions, here, |_, accepted| accepted.then_some(Unasked))
 }
 
+/// The finding of an anchor of a decision of `status` that resolves to
+/// `resolution` in the calling tree alone, as one file's anchors are read
+/// with git not asked: as [`unasked`] judges it, a missing anchor of a
+/// decision never accepted planned. `None` when it resolves.
+pub(crate) fn in_tree(resolution: &Resolution, status: &Status) -> Option<Kind<InTree>> {
+    unresolved(resolution, || {
+        Some(match status.ever_accepted() {
+            true => InTree::Unasked(Unasked),
+            false => InTree::Planned,
+        })
+    })
+}
+
+/// The kind of an anchor that resolves to `resolution`, a missing one
+/// judged by `missing`; `None` for one that resolves, or a missing one
+/// `missing` makes no finding.
+fn unresolved<V: Verdict>(
+    resolution: &Resolution,
+    missing: impl FnOnce() -> Option<V>,
+) -> Option<Kind<V>> {
+    Some(match Class::of(resolution) {
+        Class::Missing(cause) => Kind::Missing(cause, missing()?),
+        Class::Broken(cause) => Kind::Malformed(cause),
+        Class::Unread(cause) => Kind::Unverified(cause),
+        Class::Ambiguous(count) => Kind::Ambiguous(count),
+        Class::Resolved => return None,
+    })
+}
+
 /// The findings of `decisions`' anchors, a missing anchor judged by
 /// `missing` from whether its decision was ever accepted, sorted.
 fn judged<'s, V: Verdict>(
@@ -52,16 +82,12 @@ fn judged<'s, V: Verdict>(
 ) -> Vec<Finding<'s, V>> {
     let spread = here.facts.spread(here.resolutions.keys().copied());
     let judge = |anchor: &Anchor, status: &Status| -> Option<Kind<V>> {
-        Some(match Class::of(here.resolutions.get(anchor)?) {
-            Class::Missing(cause) => Kind::Missing(cause, missing(anchor, status.ever_accepted())?),
-            Class::Broken(cause) => Kind::Malformed(cause),
-            Class::Unread(cause) => Kind::Unverified(cause),
-            Class::Ambiguous(count) => Kind::Ambiguous(count),
-            Class::Resolved => {
-                let files = *spread.get(anchor)?;
-                return (files >= WEAK_FILES).then_some(Kind::Weak(files));
-            }
-        })
+        let resolution = here.resolutions.get(anchor)?;
+        if let Resolution::Resolved(_) = resolution {
+            let files = *spread.get(anchor)?;
+            return (files >= WEAK_FILES).then_some(Kind::Weak(files));
+        }
+        unresolved(resolution, || missing(anchor, status.ever_accepted()))
     };
     let mut found: Vec<Finding<'s, V>> = decisions
         .iter()

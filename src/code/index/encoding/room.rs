@@ -101,14 +101,17 @@ pub(in crate::code) const fn room_per_byte(kind: FileKind) -> usize {
     definition_cost(densest, kind.max_bytes()).div_ceil(densest.bytes)
 }
 
-/// The bytes of an index's outcome tag and its three counts, each a count
-/// of at most `u32::MAX` items.
-pub(super) const COUNTS_BYTES: usize = 1 + 3 * 5;
+/// The bytes of an index's outcome tag, its six counts, each a count
+/// of at most `u32::MAX` items, its file doc's code, and the byte that
+/// says whether a manifest follows.
+pub(super) const COUNTS_BYTES: usize = 1 + 6 * 5 + 1 + 1;
 
 /// The collections a decode allocates whole: the scopes, their depths,
-/// the definitions and the module files. Each block rounds its slots up
-/// by less than [`MIN_BLOCK_BYTES`].
-const COLLECTIONS: usize = 4;
+/// the definitions, the module files, the steps, the imports, the macro
+/// modules, and a manifest's dependencies, workspace dependencies and
+/// excluded paths. Each block rounds its slots up by less than
+/// [`MIN_BLOCK_BYTES`].
+const COLLECTIONS: usize = 10;
 
 /// The bytes an entry and its decode take past the room of its file: the
 /// counts of an index, and what the block of each collection rounds up.

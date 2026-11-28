@@ -1,0 +1,16 @@
+component = "code"
+choice = "The code tree is crate > module > file > definitions from the index alone; a one-file and a directory module are one node; a language with no module in its syntax gets the directory tree"
+reason = "The owner's view of a project's code is a tree no agent can bend: every node is read from the code index and the walk, never from a decision or a summary an agent wrote. A Rust module is one node whether its items are in name.rs or in name/mod.rs. So being a module's own file is a fact of the file's place (Module::Rust), not a node beside the module. The module path follows the mod declarations the index records. Python, TypeScript, JavaScript, C and C++ have no module a declaration names, and a lexical file has none at all, so the tree of their files is the directory tree. A file holds its definitions as its index states them, nested by their scopes."
+alternatives = [
+    "A tree an agent writes, as components and their anchors: rejected because it drifts from the code, and the view must stand on what the code says",
+    "The directory tree for Rust too: rejected because name.rs and name/ would be two nodes of one module, and a #[path] or an inline mod would place a module wrongly",
+    "Modules of Python from its import paths: rejected because a package's import root is a fact of its installation, not of the tree",
+]
+status = "accepted"
+origin = "a file's place and the crates in the code index"
+created = "2026-11-27T21:24:16.080164756Z"
+anchors = [
+    { file = "src/code/facts/places.rs", symbol = "Module" },
+    { file = "src/code/facts/places.rs", symbol = "places" },
+    { file = "src/code/facts/tree.rs", symbol = "CodeTree" },
+]

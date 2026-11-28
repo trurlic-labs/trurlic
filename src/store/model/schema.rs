@@ -96,7 +96,7 @@ pub(crate) enum Status {
 
 impl Status {
     #[must_use]
-    pub(in crate::store) const fn kind(&self) -> StatusName {
+    pub(crate) const fn kind(&self) -> StatusName {
         match self {
             Self::Proposed { .. } => StatusName::Proposed,
             Self::Accepted { .. } => StatusName::Accepted,

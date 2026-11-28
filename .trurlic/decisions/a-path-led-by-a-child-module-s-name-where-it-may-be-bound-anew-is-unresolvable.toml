@@ -1,0 +1,18 @@
+component = "code"
+choice = "A path led by a child module's name is an unresolvable import where a macro's tokens, an enclosing block or an item's generic parameter may bind that name anew"
+reason = "rustc resolves a path's first name in the innermost scope that binds it, and a block, a generic parameter or an expanded macro may bind a child module's name to something else. The index resolves no block and expands no macro, so it checks conservatively, from what its walk already holds, whether anything may. A path led by a child module's name is an unresolvable import of its file when it stands among a macro's tokens. So it is when an enclosing block holds any use, an extern crate or a macro invocation as an item or a statement, whatever name they bind, or an item of that name. So it is when an enclosing item has a generic parameter of that name. Elsewhere it is the module. The check reads no namespace, so a value of the name in such a block makes the path unresolvable too: a dependency counted unresolved rather than drawn. Each check is a binary search over sorted spans, linear in the file."
+alternatives = [
+    "Resolve the child module wherever its name leads a path: rejected because a block's use, item or extern crate, a generic parameter or a macro may bind the name, and rustc then names something else",
+    "Track what each block and macro binds and resolve through it: rejected because it needs name resolution of blocks and macro expansion, for a case an unresolved count states",
+    "Drop a path a block's use may bind as no import: rejected because a use that binds a value alone leaves the child module the path's target, and a real dependency vanishes",
+]
+status = "proposed"
+origin = "imports between Rust files in the code index"
+created = "2026-11-28T02:35:32.115780424Z"
+anchors = [
+    { file = "src/code/parse/rust/imports.rs", symbol = "Setting::kept" },
+    { file = "src/code/parse/rust/reading.rs", symbol = "Reading::enter" },
+    { file = "src/code/parse/rust/rebinding.rs", symbol = "Rebinding" },
+    { file = "src/code/parse/rust/rebinding.rs", symbol = "Rebinding::may_rebind" },
+    { file = "src/code/parse/rust/walk.rs", symbol = "Walk::note_generics" },
+]

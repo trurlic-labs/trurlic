@@ -1,13 +1,26 @@
 //! The one-byte codes of an entry's closed sets: a definition's kind, its
-//! role and its visibility, each read back by its place in its set.
+//! role, its visibility and a trait impl's self type, and a dependency's
+//! kind, each read back by its place in its set, and whether a doc is there
+//! and whole.
 
-use crate::code::index::kinds::{DefinitionKind, Role, Visibility};
+use crate::code::index::file::Doc;
+use crate::code::index::kinds::{DefinitionKind, Role, SelfType, Visibility};
+use crate::code::index::manifest::DependencyKind;
 
 /// A kind's code: its place in [`DefinitionKind::ALL`], by which a read
 /// takes it back.
 pub(super) fn kind_code(kind: DefinitionKind) -> u8 {
     place_in(&DefinitionKind::ALL, &kind)
 }
+
+/// A dependency kind's code: its place in [`DependencyKind::ALL`].
+pub(super) fn dependency_kind_code(kind: DependencyKind) -> u8 {
+    place_in(&DependencyKind::ALL, &kind)
+}
+/// A definition's marks hold a visibility's code in three bits: every
+/// code [`visibility_code`] gives, the one past the set's end for a value
+/// it misses among them, fits in them.
+const _: () = assert!(Visibility::ALL.len() + 1 < 1 << 3);
 
 /// A visibility's code: 0 for none, else one past its place in
 /// [`Visibility::ALL`].
@@ -28,5 +41,29 @@ pub(super) const fn role_code(role: Role) -> u8 {
     match role {
         Role::Code => 0,
         Role::Test => 1,
+    }
+}
+
+/// A self type's code: 0 for none, else one past its place in
+/// [`SelfType::ALL`].
+pub(super) fn self_type_code(self_type: Option<SelfType>) -> u8 {
+    self_type.map_or(0, |self_type| {
+        place_in(&SelfType::ALL, &self_type).saturating_add(1)
+    })
+}
+
+/// A definition's marks hold a self type's code in their two high bits:
+/// every code [`self_type_code`] gives, the one past the set's end for a
+/// value it misses among them, fits in them.
+const _: () = assert!(SelfType::ALL.len() + 1 < 1 << 2);
+
+/// A doc's code: 0 for none, 1 for a whole one, 2 for one cut short; a
+/// doc's text follows a code of 1 or 2. It fits the two bits the marks
+/// hold it in, below a self type's.
+pub(super) const fn doc_code(doc: Option<&Doc>) -> u8 {
+    match doc {
+        None => 0,
+        Some(doc) if doc.is_cut() => 2,
+        Some(_) => 1,
     }
 }

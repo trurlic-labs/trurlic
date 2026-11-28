@@ -26,7 +26,7 @@ impl Blobs<'_> {
     /// by and the path it held, each read in a bounded read and indexed,
     /// the cache entries used noted in `reads`; a blob git names none for,
     /// or any failure of git, leaves its files out, and a file the indexer
-    /// cannot take is an index fault.
+    /// cannot take is a read fault with its lines.
     pub(super) fn read(
         &self,
         reads: &mut Reads,
@@ -52,8 +52,12 @@ impl Blobs<'_> {
         let indexed = reads.indexer.map(&found, |worker, (kind, _, path, bytes)| {
             index_bytes(&cached, worker, (path, *kind), bytes)
         });
-        let indexed =
-            indexed.unwrap_or_else(|fault| found.iter().map(|_| Sourced::Fault(fault)).collect());
+        let indexed = indexed.unwrap_or_else(|fault| {
+            found
+                .iter()
+                .map(|(.., bytes)| Sourced::unindexed(bytes, fault))
+                .collect()
+        });
         found
             .into_iter()
             .zip(indexed)

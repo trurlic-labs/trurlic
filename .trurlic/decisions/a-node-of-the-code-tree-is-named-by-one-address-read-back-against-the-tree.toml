@@ -1,0 +1,15 @@
+component = "code"
+choice = "A node's address is crate:<dir>, outside_crates, module:<path>@<root>, directory:<path> or file:<path>, . for the code root, and reads back as that spelling alone"
+reason = "A reader hands back the address a level gives a node to list the nodes it holds, so an address names one node in one spelling, whatever bytes the tree's paths hold. Each kind's prefix is followed by a path, but a module's: its segments come first, joined by ::, and no segment holds an @, so the first @ ends them and the root directory after it may hold any byte. The empty text spells no directory, so . stands for the code root, which no path segment is. CodeTree::node reads an address once, against the tree, into the Node the level is built from; one that names no node, or names one another way, gives none, and map refuses it as invalid_argument naming it. A module's crate is its root's, so the address holds no crate."
+alternatives = [
+    "The node's position in its level: rejected because a file added elsewhere renumbers it, and a held address would name another node",
+    "A module as its root directory then its segments after ::: rejected because a directory name may hold ::, so the split would be a guess",
+    "A JSON object as the address: rejected because a command line and a page's cursor take one string",
+]
+status = "proposed"
+origin = "the map command: a level of the code tree"
+created = "2026-11-28T00:39:42.663158794Z"
+anchors = [
+    { file = "src/code/facts/address.rs", symbol = "CodeTree::address" },
+    { file = "src/code/facts/address.rs", symbol = "CodeTree::node" },
+]

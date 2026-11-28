@@ -54,13 +54,18 @@ impl Definitions {
     pub(crate) const fn hash(&self) -> SpanHash {
         self.hash
     }
-}
 
-#[cfg(test)]
-impl Definitions {
     /// Each span, in file order.
     pub(crate) fn spans(&self) -> impl Iterator<Item = &Span> {
         std::iter::once(&self.first).chain(&self.more)
+    }
+
+    /// The first and the last line of each span, in file order.
+    #[cfg(test)]
+    pub(crate) fn lines(&self) -> Vec<(usize, usize)> {
+        self.spans()
+            .map(|span| (span.first_line, span.last_line))
+            .collect()
     }
 }
 
@@ -93,6 +98,8 @@ mod tests {
             hash: SpanHash::of_text(hash),
             role: Role::Code,
             visibility: None,
+            doc: None,
+            self_type: None,
         }
     }
 

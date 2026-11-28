@@ -99,8 +99,9 @@ enum ProjectCommand {
     },
 }
 
-/// The CLI twins of the MCP tools: each runs the tool's own code on the
-/// project's graph and prints its result, `--json` as the tool returns it.
+/// The commands that run a tool's own code on the project's graph and
+/// print its result, `--json` as the tool returns it: the CLI twins of the
+/// MCP tools, and `map`, a tool no MCP client lists.
 #[derive(Subcommand, Debug)]
 enum ToolCommand {
     /// Apply a batch of ops to the graph, all or none, in one commit.
@@ -136,6 +137,64 @@ enum ToolCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Print the code tree as JSON: one level, the nodes one node holds
+    /// with the lines, definitions and decisions in and under each and the
+    /// imports between them; with `--frame`, one file; with `--search`,
+    /// the nodes and definitions a text finds.
+    Map(MapCommand),
+}
+
+/// The argument and flags of `trurlic map`: one unit, a level, a frame or
+/// a search, and where its page starts.
+#[derive(clap::Args, Debug)]
+#[command(group(clap::ArgGroup::new("item_unit").args(["frame", "search"])))]
+struct MapCommand {
+    /// The address of the node whose children to list, as a level gives
+    /// it; the crates, and what lies outside every crate, without it.
+    #[arg(conflicts_with_all = ["frame", "search"])]
+    node: Option<String>,
+
+    /// The address of a file, as a level gives it: its frame, its lines,
+    /// definitions and the decisions on each line range.
+    #[arg(long, value_name = "ADDRESS", conflicts_with = "search")]
+    frame: Option<String>,
+
+    /// A text to find in the names and paths of the tree's nodes and
+    /// definitions.
+    #[arg(long, value_name = "QUERY")]
+    search: Option<String>,
+
+    /// The address of the first child of a level to list: a level page's
+    /// `next`.
+    #[arg(long, value_name = "ADDRESS", conflicts_with = "item_unit")]
+    from: Option<String>,
+
+    /// The position of the first item of a frame or a search to list: a
+    /// frame or search page's `next`.
+    #[arg(long, value_name = "N", requires = "item_unit")]
+    from_position: Option<usize>,
+
+    /// Print the tool's JSON result, the one form `map` prints.
+    #[arg(long, required = true)]
+    json: bool,
+}
+
+impl MapCommand {
+    /// The unit these name, with where its page starts: clap admits
+    /// `--from` with a level alone and `--from-position` with a frame or a
+    /// search alone.
+    fn unit(&self) -> commands::MapUnit<'_> {
+        let from = self.from_position;
+        match (self.frame.as_deref(), self.search.as_deref()) {
+            (Some(file), _) => commands::MapUnit::Frame { file, from },
+            (None, Some(query)) => commands::MapUnit::Search { query, from },
+            (None, None) => commands::MapUnit::Level {
+                node: self.node.as_deref(),
+                from: self.from.as_deref(),
+            },
+        }
+    }
 }
 
 /// Where the graph is versioned, as `init` and `migrate` take it.
@@ -214,6 +273,8 @@ fn run_tool(command: ToolCommand) -> std::result::Result<(), ToolError> {
             },
             format(json),
         ),
+        // `--json` is required: the JSON is the one form `map` prints.
+        ToolCommand::Map(map) => commands::map(&cwd, map.unit()),
     }
 }
 

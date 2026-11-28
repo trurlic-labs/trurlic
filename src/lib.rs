@@ -3,6 +3,8 @@
 //! and, with the `bench` feature, the module `bench`. No module is public,
 //! so the compiler reports what nothing in the crate uses.
 
+#[cfg(feature = "bench")]
+pub mod bench;
 pub(crate) mod budget;
 pub(crate) mod cli;
 pub(crate) mod code;
@@ -24,48 +26,12 @@ pub use cli::main;
 pub(crate) use error::{Error, Result};
 pub use store::FORMAT_VERSION;
 
-/// What `benches/` drives: the MCP server in process, over a store written
-/// by the seeded [`Corpus`](bench::Corpus), the code index and the likely
-/// duplicates pass, and the store types its setup names. Built only with
-/// the `bench` feature.
-#[cfg(feature = "bench")]
-pub mod bench {
-    pub use crate::mcp::Server;
-    pub use crate::store::corpus::Corpus;
-    pub use crate::store::{Placement, ProjectState, Store};
-
-    /// The anchor findings of every decision of `state` in `store`'s code
-    /// root, as `check` gathers them; how many there are.
-    #[must_use]
-    pub fn anchor_findings(store: &Store, state: &ProjectState) -> usize {
-        crate::sources::checked_findings(store, &state.decisions)
-            .findings
-            .len()
-    }
-
-    /// Whether the query of the language named `name` compiles, compiled
-    /// afresh, as a process compiles it on its first file of the language.
-    #[must_use]
-    pub fn query_compiles(name: &str) -> bool {
-        crate::code::query_compiles(name)
-    }
-
-    /// The likely duplicate pairs of `state`, the pass over every pair
-    /// that `status` makes, unbounded: how many there are.
-    #[must_use]
-    pub fn likely_duplicates(state: &ProjectState) -> usize {
-        use crate::lint::duplicates::{Among, Similarity};
-        Similarity::of(&state.decisions)
-            .pairs(Among::Every, usize::MAX, usize::MAX)
-            .total
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
     use std::path::Path;
 
+    use crate::code::CodeTree;
     use crate::purity::Crate;
 
     /// Each test in a module's root that holds the module to a stricter
@@ -91,11 +57,14 @@ mod tests {
         ),
     ];
 
-    /// Each other module of the module map in `CLAUDE.md`, and what its
-    /// non-test code may name in the crate besides itself: the modules its
-    /// arrow reaches, of `mcp` only `run_server` for `commands`, and `Error`,
+    /// Each module of the module map in `CLAUDE.md`, and what its non-test
+    /// code may name in the crate besides itself: the modules its arrow
+    /// reaches, of `mcp` only `run_server` for `commands`, and `Error`,
     /// `Result`, `console` and `failpoint` where the map says it uses them.
-    const MAP: [(&str, &[&str]); 12] = [
+    const MAP: [(&str, &[&str]); 15] = [
+        ("store", &["git", "Error", "Result", "console", "failpoint"]),
+        ("code", &["store"]),
+        ("lint", &["store", "code"]),
         (
             "tools",
             &[
@@ -173,6 +142,54 @@ mod tests {
 
             assert_eq!(found, Vec::<String>::new(), "{module}");
         }
+    }
+
+    /// The module of the crate root an item of a row of [`MAP`] is in:
+    /// `Error` and `Result` are `error`'s, `run_server` is `mcp`'s.
+    fn module_of(item: &str) -> &str {
+        match item {
+            "Error" | "Result" => "error",
+            item => item.split("::").next().unwrap_or(item),
+        }
+    }
+
+    /// The edges between the modules of `src` that its non-test code's
+    /// imports and re-exports make, as the code index resolves them over
+    /// this repository's tree, are the arrows of [`MAP`], no more and no
+    /// fewer; the root, which re-exports from its modules, is no module of
+    /// the map. Where purity holds each path to its row, this holds what
+    /// the index resolves, re-exports followed.
+    #[test]
+    fn the_imports_between_the_modules_of_src_are_the_arrows_of_the_map() {
+        let (facts, _) = crate::sources::testing::this_repository();
+        let tree = CodeTree::of(facts);
+
+        let (imported, _) = tree.code_imports("src", "");
+
+        let arrows: BTreeSet<(&str, &str)> = MAP
+            .iter()
+            .flat_map(|(module, items)| items.iter().map(|item| (*module, module_of(item))))
+            .filter(|arrow| arrow.0 != arrow.1)
+            .collect();
+        let unused: Vec<_> = arrows.difference(&imported).collect();
+        let unmapped: Vec<_> = imported.difference(&arrows).collect();
+        assert!(
+            unused.is_empty() && unmapped.is_empty(),
+            "arrows no import makes: {unused:?}\nimports no arrow holds: {unmapped:?}"
+        );
+    }
+
+    /// Every import under `src`, of test code or not, resolves: the one
+    /// claim over this repository that the index alone can state, as no
+    /// boundary test resolves a path through re-exports.
+    #[test]
+    fn every_import_under_src_resolves() {
+        let (facts, _) = crate::sources::testing::this_repository();
+        let tree = CodeTree::of(facts);
+
+        let (_, unresolved) = tree.code_imports("src", "");
+
+        assert_eq!(unresolved, 0);
     }
 
     /// No module re-exports an item of another, so a caller names each

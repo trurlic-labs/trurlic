@@ -11,24 +11,7 @@ use std::fs;
 
 use serde_json::{Value, json};
 
-use crate::harness::{McpClient, Project, decision, git};
-
-/// A decision of `project` anchored at `anchors`, each `file` or
-/// `file::symbol`, accepted or proposed, in canonical form.
-fn anchored(project: &Project, name: &str, anchors: &[&str], status: &str) {
-    let spelled: Vec<String> = anchors
-        .iter()
-        .map(|anchor| match anchor.split_once("::") {
-            Some((file, symbol)) => format!("{{ file = \"{file}\", symbol = \"{symbol}\" }}"),
-            None => format!("{{ file = \"{anchor}\" }}"),
-        })
-        .collect();
-    let extra = format!("anchors = [{}]\n", spelled.join(", "));
-    let text = decision("project", &format!("Rule {name}"), &extra)
-        .replace("status = \"accepted\"", &format!("status = \"{status}\""));
-    project.write(&format!("decisions/{name}.toml"), &text);
-    project.run_ok(&["fmt"]);
-}
+use crate::harness::{McpClient, Project, anchored, git};
 
 /// A project with a source tree: `src/lib.rs` defines `open`, a `Book`
 /// with a field and a method `pages`, a `Shelf` with a field `pages`, and

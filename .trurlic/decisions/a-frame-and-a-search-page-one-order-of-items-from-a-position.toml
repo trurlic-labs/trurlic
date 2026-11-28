@@ -1,0 +1,19 @@
+component = "tools"
+choice = "A frame and a search page one order of items from a position, from_position and next, one past the last refused; the CLI takes it as --from-position, beside --frame or --search"
+reason = "A frame's items are one order: the decisions on the file, its unspanned anchors, its ranges, then its definitions. A search's are its hits in rank. A page lists them from from_position while they fit beside what it leaves out, through the fill a level's page uses, a comma counted only where one stands. next is the position of the first item after it, so a walk from next to next lists each item once. An item too large for any page is counted in too_large, and a type whose impls pass a page alone is listed with them left out and counted. A position is a function of the file's bytes and the anchors, or of the tree, never of a page's size. A position past the last item is refused as invalid_argument naming from_position, but 0 of an empty result is its one page. On the command line a position has a flag of its own, typed as a number, which clap admits with --frame or --search alone. So no value is tried as a child's address, then as a number. --frame takes a file's address, the one spelling a level and a search hit give, never a path whose form would be guessed."
+alternatives = [
+    "A line as a frame's cursor: rejected because a minified file defines thousands of items on one line, which no page could split",
+    "Ranges and definitions paged by cursors of their own: rejected because a walk following one cursor skips what the other left out",
+    "--from for a child's address and a position alike: rejected because the command would try a value as a number first, guessing the unit from its form",
+    "--frame taking a path or an address: rejected because a path could spell an address, so the unit would be guessed from its form",
+]
+status = "proposed"
+origin = "the map command: a file's frame and search"
+created = "2026-11-28T04:23:14.932032285Z"
+anchors = [
+    { file = "src/cli.rs", symbol = "MapCommand" },
+    { file = "src/tools/map/frame.rs", symbol = "page" },
+    { file = "src/tools/map/page.rs", symbol = "fill" },
+    { file = "src/tools/map/page.rs", symbol = "position" },
+    { file = "src/tools/map/search.rs", symbol = "page" },
+]

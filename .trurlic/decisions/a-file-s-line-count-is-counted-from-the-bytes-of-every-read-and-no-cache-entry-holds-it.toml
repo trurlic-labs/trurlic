@@ -1,0 +1,20 @@
+component = "sources"
+choice = "A file's line count is a scan of the bytes each read holds, warm or cold, a line ended by each newline byte and one more for bytes after the last; no cache entry holds it"
+reason = "Every read, a cache hit too, reads the file's whole bytes to hash its content for its key, so the count is one more pass over bytes already in memory, cheaper than the hash beside it. Held in the cache entry, it would grow every entry and change its format, and save no read. A line is what Lines::span counts: a carriage return and newline end one line, a lone carriage return none, an empty file has none, and bytes after the last newline are one more line, so the count is the line of the file's last byte. One function counts, line_count, and its docstring is the definition. A file read but left with no thread to index it on has its count too, as its bytes were read."
+alternatives = [
+    "Hold the count in the cache entry beside the index: rejected because a warm read holds the bytes anyway, so every entry would grow and its format change for no read saved",
+    "Count a lone carriage return as a line end: rejected because the spans count newlines alone, and a file's count would then disagree with its last definition's line",
+    "Count a final newline as the start of an empty line: rejected because an editor shows a file that ends in a newline with as many lines as it has newlines",
+]
+status = "proposed"
+origin = "lines and leading docs in the code index"
+created = "2026-11-27T21:21:19.817755843Z"
+anchors = [
+    { file = "src/code/index/span.rs", symbol = "line_count" },
+    { file = "src/sources/reads.rs", symbol = "Reads::take" },
+    { file = "src/sources/source.rs", symbol = "Sourced" },
+    { file = "src/sources/source.rs", symbol = "index_bytes" },
+]
+depends_on = [
+    "a-file-s-line-count-is-taken-where-sources-reads-it-and-a-rust-doc-s-first-paragraph-is-held-as-bounded-text",
+]

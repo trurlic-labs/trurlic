@@ -2,8 +2,7 @@
 //! non-test code names into the crate goes into a module or item of a
 //! list, and none it re-exports goes out of the module.
 
-use super::path::{Named, from_crate, paths};
-use super::read::{Crate, is_within};
+use super::read::{Crate, Named, is_within};
 
 impl Crate {
     /// Each path the non-test code of the module `module` (`store::write`,
@@ -39,18 +38,21 @@ impl Crate {
     fn paths_beyond(
         &self,
         module: &str,
-        fault: impl Fn(&Named<'_>, &[&str]) -> Option<&'static str>,
+        fault: impl Fn(&Named, &[&str]) -> Option<&'static str>,
     ) -> Vec<String> {
         let mut found = self.refused.clone();
         for (path, file) in &self.files {
-            for named in paths(file) {
-                if !is_within(&named.module, module) {
-                    continue;
-                }
-                let Some(from_root) = from_crate(&named.segments, &named.module) else {
+            for named in &file.paths {
+                let Some(named_in) = file.modules.get(named.module) else {
                     continue;
                 };
-                if let Some(what) = fault(&named, &from_root) {
+                if !is_within(named_in, module) {
+                    continue;
+                }
+                let Some(from_root) = named.crate_path(named_in) else {
+                    continue;
+                };
+                if let Some(what) = fault(named, &from_root) {
                     let spelled = named.segments.join("::");
                     found.push(format!("{path}:{}: {what} `{spelled}`", named.line));
                 }

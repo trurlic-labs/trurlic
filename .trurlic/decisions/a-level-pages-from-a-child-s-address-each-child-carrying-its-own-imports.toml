@@ -1,0 +1,18 @@
+component = "tools"
+choice = "A page lists a level's children from from while they fit beside omitted, too_large and next; a child that passes a page alone has its list left out and counted"
+reason = "A level of thousands of files outgrows any one result, so it is split, each page within MAX_TOOL_RESULT_BYTES whole and never cut by the generic truncation. The cursor is a child's address: next names the first child left out, and from set to it lists on. An address that is no child of the level is refused as invalid_argument naming it. An edge has one source, so the imports of a child into its siblings sit in its record and page with it, each edge on one page. A child whose record passes a page of its own is listed with its list left out and counted: a crate's dependencies, a module's or a file's imports. Each child is judged against the room of a page that starts at it, so one that fits only a page of its own ends a page and starts the next. One that passes it even so, or whose address takes more than a quarter of a result, is listed by no page: the page it falls on counts it in too_large and next names a child after it. So across the pages of a level each child is listed once or counted once."
+alternatives = [
+    "A page number: rejected because a file added between two calls moves every later page silently",
+    "Only the edges between the children of one page: rejected because an edge between children of two pages would never be listed",
+    "Edges as a section with a cursor of its own: rejected because a walk following one cursor skips what the other left out",
+    "Cut a large child's imports to a prefix: rejected because a partial list reads as the whole, where an empty one with its count does not",
+    "End a page at a child too large for any page and name it in next: rejected because next could then name an address the page has no room for",
+]
+status = "proposed"
+origin = "the map command: a level of the code tree"
+created = "2026-11-28T00:39:42.663158794Z"
+anchors = [
+    { file = "src/tools/map/page.rs", symbol = "fitted" },
+    { file = "src/tools/map/page.rs", symbol = "page" },
+    { file = "src/tools/map/page.rs", symbol = "rooms" },
+]

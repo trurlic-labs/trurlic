@@ -10,7 +10,8 @@ use std::ops::Range;
 
 use super::units::Leaves;
 use crate::code::index::{
-    Definition, FileIndex, IndexFault, Lines, ModuleFile, ScopeId, ScopeTree, Span, SpanHash, What,
+    Definition, Doc, FileIndex, Import, IndexFault, Lines, ModuleFile, PathStep, ScopeId,
+    ScopeTree, Span, SpanHash, What,
 };
 
 /// The hash a definition holds until the end of the walk.
@@ -45,20 +46,22 @@ impl<'t> TreeIndex<'t> {
         self.lines.span(range.start, range.end)
     }
 
-    /// Define `scope` over bytes `range` as `what` says, its hash over
-    /// the tokens within them.
+    /// Define `scope` over bytes `range` as `what` says, with `doc`, its
+    /// hash over the tokens within them.
     pub(super) fn define(
         &mut self,
         scope: ScopeId,
         range: Range<usize>,
         what: What,
+        doc: Option<Doc>,
     ) -> Result<(), IndexFault> {
         let units = self.leaves.within(&range);
-        self.define_units(scope, &range, units, what)
+        let definition = self.definition(scope, &range, what, doc);
+        self.admit(definition, units)
     }
 
-    /// Define `scope` over bytes `bytes` as `what` says, its hash over
-    /// `units`, the units of a marked tree its span node holds.
+    /// Define `scope` over bytes `bytes` as `what` says, with no doc, its
+    /// hash over `units`, the units of a marked tree its span node holds.
     pub(super) fn define_units(
         &mut self,
         scope: ScopeId,
@@ -66,23 +69,70 @@ impl<'t> TreeIndex<'t> {
         units: Range<usize>,
         what: What,
     ) -> Result<(), IndexFault> {
-        let definition = Definition {
+        let definition = self.definition(scope, bytes, what, None);
+        self.admit(definition, units)
+    }
+
+    /// The definition of `scope` over bytes `bytes`, to be hashed.
+    fn definition(
+        &self,
+        scope: ScopeId,
+        bytes: &Range<usize>,
+        what: What,
+        doc: Option<Doc>,
+    ) -> Definition {
+        Definition {
             scope,
             kind: what.kind,
             span: self.span(bytes),
             hash: UNHASHED,
             role: what.role,
             visibility: what.visibility,
-        };
+            doc,
+            self_type: what.self_type,
+        }
+    }
+
+    /// Admit `definition`, whose hash is over `units`.
+    fn admit(&mut self, definition: Definition, units: Range<usize>) -> Result<(), IndexFault> {
         self.scopes.admit_definition(&definition)?;
         self.index.definitions.push(definition);
         self.ranges.push(units);
         Ok(())
     }
 
+    /// Give the file `doc`, charged to its room.
+    pub(super) fn document_file(&mut self, doc: Doc) -> Result<(), IndexFault> {
+        self.scopes.admit_file_doc(&doc)?;
+        self.index.doc = Some(doc);
+        Ok(())
+    }
+
     pub(super) fn add_module_file(&mut self, module: ModuleFile) -> Result<(), IndexFault> {
         self.scopes.admit_module_file(&module)?;
         self.index.rust.module_files.push(module);
+        Ok(())
+    }
+
+    /// Add `step`, charged to the file's room; its place among the steps.
+    pub(super) fn add_step(&mut self, step: PathStep) -> Result<usize, IndexFault> {
+        self.scopes.admit_step(&step)?;
+        let at = self.index.rust.steps.len();
+        self.index.rust.steps.push(step);
+        Ok(at)
+    }
+
+    /// Add `module`, a module that holds a macro invocation as an item,
+    /// charged to the file's room.
+    pub(super) fn add_macro_module(&mut self, module: Option<ScopeId>) -> Result<(), IndexFault> {
+        self.scopes.admit_macro_module(module)?;
+        self.index.rust.macro_modules.push(module);
+        Ok(())
+    }
+
+    pub(super) fn add_import(&mut self, import: Import) -> Result<(), IndexFault> {
+        self.scopes.admit_import(&import)?;
+        self.index.rust.imports.push(import);
         Ok(())
     }
 

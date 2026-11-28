@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+use crate::sources::QueryFault;
 use crate::tools::result::ToolError;
 
 /// Where a value sits in a call's arguments, rendered as `ops[2].name`.
@@ -68,6 +69,8 @@ pub(in crate::tools) enum Fault {
         max_items: usize,
     },
     NotOneOf(Vec<&'static str>),
+    /// A text that is no search's query.
+    Query(QueryFault),
 }
 
 impl fmt::Display for Fault {
@@ -83,6 +86,7 @@ impl fmt::Display for Fault {
                 write!(f, "has {items} items, over the limit of {max_items}")
             }
             Self::NotOneOf(names) => write!(f, "must be one of: {}", names.join(", ")),
+            Self::Query(fault) => fault.fmt(f),
         }
     }
 }

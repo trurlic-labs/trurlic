@@ -1,0 +1,27 @@
+component = "tools"
+choice = "The code tree is read through trurlic map --json, CLI only and no MCP tool, spec-built as a tool's result; a call gives one level, one file's frame or one search's hits, paged within the result budget"
+reason = "The owner's view of the code computes no fact: every number, status and edge it shows is a field of a command's JSON. So the tree is read through map, a ToolSpec whose Output declares the outputSchema the view's types are generated from. tests/integration/golden/map_schemas.json pins the inputSchema and outputSchema of each map tool, by name. The registry lists none of them, as the tree is the owner's view and an agent reads decisions by file and component already. A level is one node's children, each with its kind, its lines and the sums of the decisions and definitions in and under it, and the edges between them. The root is the workspace's crates, with what lies outside every crate. A level is paged within MAX_TOOL_RESULT_BYTES, and every child or list a page leaves out is counted. The JSON is the one form: --json is required, so trurlic map alone is a usage error naming it, and a text form added later changes nothing the plain command printed. The node is a positional argument, the root without it."
+alternatives = [
+    "An MCP tool map: rejected because the tree is the owner's view, and an agent reads the decisions of a file or a component through the tools it has",
+    "The whole tree in one call: rejected because a large project's tree passes any result, and the view shows one level at a time",
+    "JSON built by hand in commands: rejected because the outputSchema the view's types come from would drift from the JSON a call gives",
+    "Print the JSON without --json: rejected because a text form added later would change what the plain command prints",
+]
+status = "proposed"
+origin = "the map command: a level of the code tree"
+created = "2026-11-28T00:39:42.663158794Z"
+anchors = [
+    { file = "src/cli.rs", symbol = "ToolCommand::Map" },
+    { file = "src/commands/map.rs", symbol = "map" },
+    { file = "src/tools/map/tool.rs", symbol = "MAP" },
+]
+
+[accepted_text]
+choice = "The code tree is read through trurlic map --json, CLI only and no MCP tool, spec-built as a tool's result; a call gives one level, paged within the result budget"
+reason = "The owner's view of the code computes no fact: every number, status and edge it shows is a field of a command's JSON. So the tree is read through map, a ToolSpec whose Output declares the outputSchema the view's types are generated from. tests/integration/golden/map_schemas.json pins both its schemas. The registry does not list it, as the tree is the owner's view and an agent reads decisions by file and component already. A unit is one level: a node's children, each with its kind, its lines and the sums of the decisions and definitions in and under it, and the edges between them. The root is the workspace's crates, with what lies outside every crate. A level is paged within MAX_TOOL_RESULT_BYTES, and every child or list a page leaves out is counted. The JSON is the one form: --json is required, so trurlic map alone is a usage error naming it, and a text form added later changes nothing the plain command printed. The node is a positional argument, the root without it."
+alternatives = [
+    "An MCP tool map: rejected because the tree is the owner's view, and an agent reads the decisions of a file or a component through the tools it has",
+    "The whole tree in one call: rejected because a large project's tree passes any result, and the view shows one level at a time",
+    "JSON built by hand in commands: rejected because the outputSchema the view's types come from would drift from the JSON a call gives",
+    "Print the JSON without --json: rejected because a text form added later would change what the plain command prints",
+]

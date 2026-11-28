@@ -1,0 +1,190 @@
+[
+  {
+    "address": "file:src/other.rs",
+    "definitions": [
+      {
+        "first_line": 3,
+        "kind": "impl",
+        "last_line": 7,
+        "path": [
+          "Square",
+          "<Display>"
+        ],
+        "test": false
+      },
+      {
+        "first_line": 4,
+        "kind": "method",
+        "last_line": 6,
+        "path": [
+          "Square",
+          "<Display>",
+          "fmt"
+        ],
+        "test": false
+      },
+      {
+        "first_line": 10,
+        "kind": "method",
+        "last_line": 10,
+        "path": [
+          "Square",
+          "more"
+        ],
+        "test": false,
+        "visibility": "public"
+      },
+      {
+        "first_line": 12,
+        "kind": "method",
+        "last_line": 12,
+        "path": [
+          "Square",
+          "most"
+        ],
+        "test": false,
+        "visibility": "public"
+      },
+      {
+        "first_line": 15,
+        "impls": {
+          "types_named": 2
+        },
+        "kind": "struct",
+        "last_line": 15,
+        "path": [
+          "Circle"
+        ],
+        "test": false,
+        "visibility": "public"
+      },
+      {
+        "first_line": 18,
+        "kind": "method",
+        "last_line": 18,
+        "path": [
+          "Circle",
+          "square"
+        ],
+        "test": false,
+        "visibility": "public"
+      },
+      {
+        "first_line": 21,
+        "kind": "function",
+        "last_line": 21,
+        "path": [
+          "squared"
+        ],
+        "test": false,
+        "visibility": "public"
+      },
+      {
+        "first_line": 23,
+        "kind": "function",
+        "last_line": 23,
+        "path": [
+          "square_root_of_a_number"
+        ],
+        "test": false,
+        "visibility": "public"
+      }
+    ],
+    "index_state": "indexed",
+    "line_count": 23,
+    "name": "other.rs",
+    "on_file": [
+      {
+        "decision": "i-src",
+        "status": "proposed"
+      }
+    ],
+    "ranges": [
+      {
+        "decisions": [],
+        "first_line": 1,
+        "last_line": 20
+      },
+      {
+        "decisions": [
+          {
+            "decision": "j-other",
+            "status": "accepted"
+          }
+        ],
+        "first_line": 21,
+        "last_line": 21
+      },
+      {
+        "decisions": [],
+        "first_line": 22,
+        "last_line": 23
+      }
+    ],
+    "total": 12,
+    "unspanned_anchors": []
+  },
+  {
+    "hits": [
+      {
+        "definition": {
+          "file": "file:src/other.rs",
+          "first_line": 15,
+          "kind": "struct",
+          "last_line": 15,
+          "path": [
+            "Circle"
+          ]
+        },
+        "kind": "definition",
+        "match": "exact_name",
+        "name": "Circle"
+      },
+      {
+        "definition": {
+          "file": "file:src/shapes.rs",
+          "first_line": 12,
+          "kind": "struct",
+          "last_line": 12,
+          "path": [
+            "Circle"
+          ]
+        },
+        "kind": "definition",
+        "match": "exact_name",
+        "name": "Circle"
+      },
+      {
+        "definition": {
+          "file": "file:src/shapes.rs",
+          "first_line": 15,
+          "kind": "method",
+          "last_line": 17,
+          "path": [
+            "Circle",
+            "area"
+          ]
+        },
+        "kind": "definition",
+        "match": "path_substring",
+        "name": "area"
+      },
+      {
+        "definition": {
+          "file": "file:src/other.rs",
+          "first_line": 18,
+          "kind": "method",
+          "last_line": 18,
+          "path": [
+            "Circle",
+            "square"
+          ]
+        },
+        "kind": "definition",
+        "match": "path_substring",
+        "name": "square"
+      }
+    ],
+    "total": 4
+  }
+]

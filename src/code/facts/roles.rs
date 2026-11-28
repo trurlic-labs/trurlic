@@ -4,38 +4,18 @@
 //! language's row names (`tests/`, `test_*.py`, `conftest.py`,
 //! `*.test.ts`, `__tests__/`). A Rust file is test code under its crate's
 //! `tests/` directory, or as a module file that only test code declares:
-//! a step over the crates, after each file's own index.
-//!
-//! The walk goes forward from each crate's targets as cargo finds them
-//! without a manifest table: `src/lib.rs`, `src/main.rs`, `build.rs`, and
-//! each `src/bin/`, `tests/`, `benches/` and `examples/` file (`x.rs` or
-//! `x/main.rs`); a target a manifest's `path =` names elsewhere is not
-//! read. From each file it follows the `mod name;` declarations the file
-//! records, to `name.rs` or `name/mod.rs` in the module's directory, or
-//! to the file a relative `#[path]` names (an absolute one names no file
-//! of the tree); the module's directory takes a segment for each inline
-//! `mod` around the declaration, none for a function or any other item
-//! it stands in. A file is test code when it is under its crate's
+//! a step over the crates by the `mod` walk (`walk.rs`), after each
+//! file's own index. A file is test code when it is under its crate's
 //! `tests/`, or when every declaration that reaches it is test code, or in
 //! a file only test code reaches; a file no target reaches keeps what its
-//! own bytes say. Each file is visited at most twice, once as code and
-//! once as test, so the walk is linear in the tree.
-//!
-//! A file an anchor brings in from outside the walk is a root or a
-//! module like any other, but the walk does not follow its own
-//! declarations: what it declares is read for no other file.
+//! own bytes say.
 
 use std::collections::BTreeSet;
 
-use super::crates::{Crates, Files, file_name, parent};
-use crate::code::index::{DefinitionKind, FileIndex, FileKind, ModuleFile, Role, ScopeId, Segment};
+use super::crates::{Crates, Files};
+use super::walk::{Declared, Reach, relative_to_crate, walk};
+use crate::code::index::{FileKind, Role};
 use crate::code::parse::language_of;
-
-/// The files of a target's root in a crate, by their directory.
-const ROOT_FILES: [&str; 3] = ["src/lib.rs", "src/main.rs", "build.rs"];
-
-/// The directories each of whose files is a target's root.
-const ROOT_DIRS: [&str; 4] = ["src/bin", "tests", "benches", "examples"];
 
 /// The files of `files` and `outside` that are test code whole; `crates`
 /// is of the same files. The declarations of `outside`'s Rust files,
@@ -45,125 +25,53 @@ pub(super) fn test_files<'i>(
     outside: &Files<'i>,
     crates: &Crates<'i>,
 ) -> BTreeSet<&'i str> {
-    let mut found = rust_test_files(files, outside, crates);
-    found.extend(
-        files
-            .iter()
-            .chain(outside)
-            .filter(|(path, (kind, _))| {
-                language_of(*kind).is_some_and(|language| language.is_test_place(path))
-            })
-            .map(|(&path, _)| path),
-    );
-    found
-}
-
-/// The Rust files of `files` and `outside` that are test code whole.
-fn rust_test_files<'i>(
-    files: &Files<'i>,
-    outside: &Files<'i>,
-    crates: &Crates<'i>,
-) -> BTreeSet<&'i str> {
-    let rust = || {
-        files
-            .iter()
-            .chain(outside)
-            .filter(|(_, (kind, _))| *kind == FileKind::Rust)
-            .map(|(&path, (_, index))| (path, *index))
-    };
-    let roots: BTreeSet<&str> = rust()
-        .map(|(path, _)| path)
-        .filter(|path| relative_to_crate(path, crates).is_some_and(is_target_root))
-        .collect();
-    let (reached, reached_as_code) = walk_forward(files, outside, crates, &roots);
-    rust()
-        .map(|(path, _)| path)
-        .filter(|path| {
-            role_of_place(path, crates) == Role::Test
-                || (reached.contains(path) && !reached_as_code.contains(path))
-        })
-        .collect()
-}
-
-/// The files the walk from `roots` reaches, and those it reaches as
-/// code; the declarations of the files of `outside` are not followed.
-fn walk_forward<'i>(
-    files: &Files<'i>,
-    outside: &Files<'i>,
-    crates: &Crates<'i>,
-    roots: &BTreeSet<&'i str>,
-) -> (BTreeSet<&'i str>, BTreeSet<&'i str>) {
-    let mut reached_as_code = BTreeSet::new();
-    let mut reached = BTreeSet::new();
-    let mut pending: Vec<(&str, Role)> = roots
-        .iter()
-        .map(|&root| (root, role_of_place(root, crates)))
-        .collect();
-    while let Some((path, role)) = pending.pop() {
-        let first = match role {
-            Role::Code => reached_as_code.insert(path),
-            Role::Test => reached.insert(path),
-        };
-        reached.insert(path);
-        let Some((_, index)) = files.get(path).filter(|_| first) else {
-            continue;
-        };
-        let modules = module_scopes(index);
-        let declaring = Declaring {
-            path,
-            is_root: roots.contains(path),
-            index,
-            modules: &modules,
-        };
-        for module in &index.rust.module_files {
-            let target = declaring.module_file(module, |candidate| {
-                files
-                    .get_key_value(candidate)
-                    .or_else(|| outside.get_key_value(candidate))
-                    .map(|(&found, _)| found)
-            });
-            if let Some(target) = target {
-                pending.push((target, role.or(module.role)));
-            }
+    let reached = walk::<ReachedAs>(files, outside, crates, &mut ());
+    let is_test = |path: &str, kind: FileKind| {
+        if kind != FileKind::Rust {
+            return language_of(kind).is_some_and(|language| language.is_test_place(path));
         }
-    }
-    (reached, reached_as_code)
-}
-
-/// The scopes of `index` that are modules: the directories of a module
-/// file declared inside them.
-fn module_scopes(index: &FileIndex) -> BTreeSet<ScopeId> {
-    index
-        .definitions
+        role_of_place(path, crates) == Role::Test
+            || reached.get(path) == Some(&ReachedAs(Role::Test))
+    };
+    files
         .iter()
-        .filter(|definition| definition.kind == DefinitionKind::Module)
-        .map(|definition| definition.scope)
+        .chain(outside)
+        .filter(|(path, (kind, _))| is_test(path, *kind))
+        .map(|(&path, _)| path)
         .collect()
 }
 
-/// Whether `relative`, a path from its crate's directory, is a target's
-/// root.
-fn is_target_root(relative: &str) -> bool {
-    ROOT_FILES.contains(&relative)
-        || ROOT_DIRS.iter().any(|dir| {
-            let rest = relative
-                .strip_prefix(dir)
-                .and_then(|rest| rest.strip_prefix('/'));
-            rest.is_some_and(|rest| match rest.split_once('/') {
-                None => rest.ends_with(".rs"),
-                Some((_, file)) => file == "main.rs",
-            })
-        })
-}
+/// The role a file is reached with: test code when its place or a
+/// declaration on the way is, and code once any walk reaches it as code.
+/// It rises once, from test to code, so a file is followed at most twice.
+#[derive(Debug, PartialEq, Eq)]
+struct ReachedAs(Role);
 
-/// `path` from its crate's directory; `None` outside every crate.
-fn relative_to_crate<'p>(path: &'p str, crates: &Crates<'_>) -> Option<&'p str> {
-    match crates.crate_of(path) {
-        root if root == path => None,
-        "" => Some(path),
-        root => path
-            .strip_prefix(root)
-            .and_then(|rest| rest.strip_prefix('/')),
+impl<'i> Reach<'i> for ReachedAs {
+    type Shared = ();
+
+    fn root(root: &'i str, crates: &Crates<'i>) -> Self {
+        Self(role_of_place(root, crates))
+    }
+
+    fn through(&self, declared: &Declared<'i>, (): &mut ()) -> Self {
+        Self(self.0.or(declared.role))
+    }
+
+    /// `None`: a second file is no module of the crate, so it keeps what
+    /// its own bytes say, as a file no target reaches does.
+    fn second_file(&self, _declared: &Declared<'i>, (): &mut ()) -> Option<Self> {
+        None
+    }
+
+    fn join(&mut self, other: Self) -> bool {
+        match (self.0, other.0) {
+            (Role::Test, Role::Code) => {
+                self.0 = Role::Code;
+                true
+            }
+            (Role::Code, _) | (Role::Test, Role::Test) => false,
+        }
     }
 }
 
@@ -175,107 +83,10 @@ fn role_of_place(path: &str, crates: &Crates<'_>) -> Role {
     }
 }
 
-/// A file whose module declarations are followed.
-struct Declaring<'a> {
-    path: &'a str,
-    is_root: bool,
-    index: &'a FileIndex,
-    /// Its scopes that are inline modules.
-    modules: &'a BTreeSet<ScopeId>,
-}
-
-impl Declaring<'_> {
-    /// The file `module`, declared here, names, as `find` finds it by
-    /// its path; `None` when there is none.
-    fn module_file<'i>(
-        &self,
-        module: &ModuleFile,
-        find: impl Fn(&str) -> Option<&'i str>,
-    ) -> Option<&'i str> {
-        let name = self.name_of(module.scope)?;
-        let inline = self.inline_modules(module.scope);
-        // A crate's root and a `mod.rs` hold their modules beside them; any
-        // other `x.rs` holds them in `x/`.
-        let mut dir = parent(self.path).to_owned();
-        if !self.is_root && file_name(self.path) != "mod.rs" {
-            dir = join(&dir, file_name(self.path).strip_suffix(".rs")?);
-        }
-        let candidates = match &module.path {
-            Some(named) if named.starts_with('/') => return None,
-            Some(named) if inline.is_empty() => vec![join(parent(self.path), named)],
-            Some(named) => vec![join(&join(&dir, &inline.join("/")), named)],
-            None => {
-                let dir = inline.iter().fold(dir, |dir, module| join(&dir, module));
-                vec![
-                    join(&dir, &format!("{name}.rs")),
-                    join(&dir, &format!("{name}/mod.rs")),
-                ]
-            }
-        };
-        candidates
-            .into_iter()
-            .find_map(|candidate| find(&normalize(&candidate)?))
-    }
-
-    /// The last name of the scope `id`.
-    fn name_of(&self, id: ScopeId) -> Option<&str> {
-        match self.index.scopes.get(id.at())?.name.last()? {
-            Segment::Name(name) | Segment::Impl { name, .. } => Some(name),
-        }
-    }
-
-    /// The names of the inline modules around the scope `id`, outermost
-    /// first. A parent's id is below its child's, so the walk ends.
-    fn inline_modules(&self, id: ScopeId) -> Vec<&str> {
-        let mut names = Vec::new();
-        let mut next = self
-            .index
-            .scopes
-            .get(id.at())
-            .and_then(|scope| scope.parent);
-        while let Some(current) = next.filter(|current| *current < id) {
-            if self.modules.contains(&current) {
-                names.extend(self.name_of(current));
-            }
-            next = self
-                .index
-                .scopes
-                .get(current.at())
-                .and_then(|scope| scope.parent)
-                .filter(|parent| *parent < current);
-        }
-        names.reverse();
-        names
-    }
-}
-
-/// `dir` and `rest` joined by a `/`; `rest` alone at the root.
-fn join(dir: &str, rest: &str) -> String {
-    match dir {
-        "" => rest.to_owned(),
-        dir => format!("{dir}/{rest}"),
-    }
-}
-
-/// `path` with its `.` segments dropped and each `..` taking the segment
-/// before it; `None` when a `..` leaves the tree.
-fn normalize(path: &str) -> Option<String> {
-    let mut segments: Vec<&str> = Vec::new();
-    for segment in path.split('/') {
-        match segment {
-            "" | "." => {}
-            ".." => {
-                segments.pop()?;
-            }
-            segment => segments.push(segment),
-        }
-    }
-    Some(segments.join("/"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code::index::FileIndex;
 
     fn test_files_of(files: &[(&str, &str)]) -> Vec<String> {
         let indexes: Vec<(&str, FileKind, FileIndex)> = files
@@ -289,11 +100,11 @@ mod tests {
                 )
             })
             .collect();
-        let tree = indexes
+        let tree: Files<'_> = indexes
             .iter()
             .map(|(path, kind, index)| (*path, (*kind, index)))
             .collect();
-        let crates = Crates::of(&tree, &Files::new());
+        let crates = Crates::of(tree.keys().copied(), []);
         test_files(&tree, &Files::new(), &crates)
             .into_iter()
             .map(str::to_owned)
@@ -385,5 +196,41 @@ mod tests {
         files.extend(names.iter().map(|name| (name.as_str(), "")));
 
         assert_eq!(test_files_of(&files).len(), count);
+    }
+
+    #[test]
+    fn the_second_file_of_a_module_keeps_the_role_its_bytes_give() {
+        let files = [
+            ("Cargo.toml", "[package]\n"),
+            ("src/lib.rs", "#[cfg(test)]\nmod m;\n"),
+            ("src/m.rs", ""),
+            ("src/m/mod.rs", ""),
+        ];
+
+        assert_eq!(test_files_of(&files), ["src/m.rs"]);
+    }
+
+    #[test]
+    fn a_manifest_with_no_index_still_makes_its_crate_for_the_test_roles() {
+        let files = [
+            ("inner/Cargo.toml", "[package\n"),
+            ("inner/src/lib.rs", "#[cfg(test)]\nmod t;\n"),
+            ("inner/src/t.rs", "fn f() {}\n"),
+            ("inner/tests/x.rs", "fn g() {}\n"),
+        ];
+        let facts = crate::code::testing::facts(&files, &[]);
+        let roles: Vec<(&str, Role)> = facts
+            .definitions()
+            .map(|(path, _, _, role)| (path, role))
+            .collect();
+
+        assert_eq!(
+            roles,
+            [
+                ("inner/src/lib.rs", Role::Test),
+                ("inner/src/t.rs", Role::Test),
+                ("inner/tests/x.rs", Role::Test),
+            ]
+        );
     }
 }

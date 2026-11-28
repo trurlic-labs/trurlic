@@ -1,6 +1,6 @@
-//! The corpus's text: sentences of a vocabulary of [`WORDS`] and words
-//! coined from [`SYLLABLES`], each drawn by its rank's band
-//! ([`VOCABULARY_BANDS`]).
+//! The corpus's text, of the graph and of the source tree's doc comments:
+//! sentences of a vocabulary of [`WORDS`] and words coined from
+//! [`SYLLABLES`], each drawn by its rank's band ([`VOCABULARY_BANDS`]).
 
 use std::ops::RangeInclusive;
 
@@ -65,13 +65,35 @@ impl SplitMix64 {
             }
             let room = bytes - text.len() - 1;
             let length = self.within(&SENTENCE_BYTES).min(room);
-            let sentence = self.phrase(length);
-            let mut letters = sentence.chars();
-            text.extend(letters.next().map(|c| c.to_ascii_uppercase()));
-            text.push_str(letters.as_str());
-            text.push('.');
+            text.push_str(&self.sentence(length));
         }
         text
+    }
+
+    /// A count of sentences of the vocabulary in `count`, on one line.
+    pub(super) fn sentences(&mut self, count: &RangeInclusive<usize>) -> String {
+        let count = self.within(count);
+        let sentences: Vec<String> = (0..count)
+            .map(|_| {
+                let length = self.within(&SENTENCE_BYTES);
+                self.sentence(length)
+            })
+            .collect();
+        sentences.join(" ")
+    }
+
+    /// A phrase of at most `bytes`, capitalized, and a full stop.
+    fn sentence(&mut self, bytes: usize) -> String {
+        let phrase = self.phrase(bytes);
+        let mut letters = phrase.chars();
+        let mut sentence: String = letters
+            .next()
+            .map(|c| c.to_ascii_uppercase())
+            .into_iter()
+            .collect();
+        sentence.push_str(letters.as_str());
+        sentence.push('.');
+        sentence
     }
 
     /// Lowercase words of the vocabulary, at most `bytes` long unless the

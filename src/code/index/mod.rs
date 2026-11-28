@@ -1,13 +1,16 @@
 //! What a file's index is, whichever resolver builds it: the kind of a
-//! file, the definitions and scopes it holds, the symbol grammar its paths
-//! are spelled in, the budgets and bounds it is built within, the scope
-//! tree every resolver builds it through, and its entry in the cache.
-//! Nothing here reads a grammar or names a resolver: the resolvers stand
-//! on these values, never the other way.
+//! file, the definitions and scopes it holds, what a Cargo manifest
+//! states, the symbol grammar its paths are spelled in, the budgets and
+//! bounds it is built within, the scope tree every resolver builds it
+//! through, and its entry in the cache. Nothing here reads a grammar or
+//! names a resolver: the resolvers stand on these values, never the other
+//! way.
 
 mod encoding;
 mod file;
+mod import;
 mod kinds;
+mod manifest;
 mod scope;
 mod scope_tree;
 mod span;
@@ -17,15 +20,20 @@ mod work;
 pub(in crate::code) use encoding::{ENTRY_OVERHEAD_BYTES, Reader, Writer, room_per_byte};
 pub(crate) use encoding::{decode, encode, max_entry_bytes};
 pub(crate) use file::{
-    Definition, FileIndex, FileKind, IndexFault, Indexed, MAX_SOURCE_BYTES, ModuleFile,
+    Definition, Doc, FileIndex, FileKind, IndexFault, Indexed, MAX_SOURCE_BYTES, ModuleFile,
 };
-pub(in crate::code) use file::{LEXICAL_MAX_BYTES, TREE_SITTER_MAX_BYTES};
-pub(in crate::code) use kinds::What;
+pub(in crate::code) use file::{LEXICAL_MAX_BYTES, MAX_DOC_BYTES, TREE_SITTER_MAX_BYTES};
+pub(in crate::code) use import::{Before, Binds, Import, ImportKind, PathStep};
 pub(crate) use kinds::{DefinitionKind, Role, Visibility};
+pub(in crate::code) use kinds::{SelfType, What};
+pub(crate) use manifest::DependencyKind;
+pub(in crate::code) use manifest::{
+    Dependency, DependencySource, Manifest, Package, Workspace, WorkspaceDependency,
+};
 pub(crate) use scope::{MAX_NESTING, Scope, ScopeId, Scopes};
 pub(in crate::code) use scope_tree::ScopeTree;
 pub(in crate::code) use span::{CLOSE_MARK, Lines, NESTED_MARK, OPEN_MARK};
-pub(crate) use span::{HASH_SCHEME, Span, SpanHash};
+pub(crate) use span::{HASH_SCHEME, Span, SpanHash, line_count};
 pub(in crate::code) use symbol::name_segments;
 pub(super) use symbol::{Segment, Symbol, SymbolFault, Syntax};
 pub(in crate::code) use work::{

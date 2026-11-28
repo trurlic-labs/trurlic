@@ -1,0 +1,28 @@
+component = "code"
+choice = "A Rust file's in-crate paths resolve by name and path to a module's file through re-exports, test code flagged; a pub use is no dependency, counted apart; what rules cannot settle is unresolved"
+reason = "The owner's view of the code shows the edges between the nodes of each level, and an edge stands on stated rules: what resolves is resolved by them, and what they cannot settle is stated unresolved. An import is a path a file names into its crate, in code, in a macro's tokens or in an attribute's string. It goes into the module that is the longest prefix of its path that is a module, an inline module resolving to the file that holds it. A name past the modules ends at the file that defines it, an enum's variant or an associated item after it alike. A name a use binds goes where that use's path goes, so re-exports are followed through chains, each step resolved once, a cycle ending unresolved. A pub use binds a name and is no dependency of the file that states it: an edge counts its re-exports apart from its dependency imports, so an edge of re-exports alone has none. An import may not resolve: through a macro-made item, a glob-imported name, a file at no one place, a name nothing defines or binds, or one whose first name may be bound anew. It is counted unresolved under its node. An edge between two nodes of a level is the sum of the file imports below them, test code only when every import behind it is. The edge is an approximation by names and paths, expanding no macro, inferring no type, evaluating no cfg. The resolver's module lists what that cannot see: what a derive or an attribute macro makes or rewrites, an item in a block in a field's type, which cfg branch is built, a self or super path in a macro_rules! body, the 2015 edition."
+alternatives = [
+    "Resolve with rust-analyzer or rustc's name resolution: rejected because the index is pure and takes no dependency for it, and a full resolver expands macros and infers types far past a file's room",
+    "Guess the likeliest target of a path that does not resolve: rejected because a false edge in the owner's view misleads where an unresolved count does not",
+    "Count a pub use as an edge of its file: rejected by the owner, since a module's re-exports are its surface, not a dependency of its code",
+    "Edges between files only: rejected because a level of modules would leave every reader to sum the file pairs below it",
+]
+status = "proposed"
+origin = "imports between Rust files in the code index"
+created = "2026-11-27T23:27:09.715654771Z"
+anchors = [
+    { file = "src/code/facts/imports.rs", symbol = "Resolver" },
+    { file = "src/code/facts/imports.rs", symbol = "file_edges" },
+    { file = "src/code/facts/level.rs", symbol = "Level::edges" },
+    { file = "src/code/index/import.rs", symbol = "ImportKind" },
+]
+
+[accepted_text]
+choice = "A Rust file's imports are its in-crate paths, resolved by name and path to a module's file through re-exports, test code flagged; a pub use is no edge, an unresolved import stays unresolved"
+reason = "The owner's view of the code shows the edges between the nodes of each level, and an edge must stand on what the code states, never on a guess. An import is a path a file names into its crate, in code, in a macro's tokens or in an attribute's string. It goes into the module that is the longest prefix of its path that is a module, an inline module resolving to the file that holds it. A name past the modules ends at the file that defines it, an enum's variant or an associated item after it alike. A name a use binds goes where that use's path goes, so re-exports are followed through chains, each step resolved once from an explicit stack, a cycle ending unresolved. A pub use binds a name and is no dependency of the file that states it. An import that does not resolve, through a macro-made item, a glob-imported name, a file at no one place or a name nothing defines or binds, is counted as unresolved under its node. An edge between two nodes of a level is the sum of the file imports below them, test code only when every import behind it is. The edge is an approximation by names and paths: no macro is expanded and no type is inferred."
+alternatives = [
+    "Resolve with rust-analyzer or rustc's name resolution: rejected because the index is pure and takes no dependency for it, and a full resolver expands macros and infers types far past a file's room",
+    "Guess the likeliest target of a path that does not resolve: rejected because a false edge in the owner's view misleads where an unresolved count does not",
+    "Count a pub use as an edge of its file: rejected by the owner, since a module's re-exports are its surface, not a dependency of its code",
+    "Edges between files only: rejected because a level of modules would leave every reader to sum the file pairs below it",
+]

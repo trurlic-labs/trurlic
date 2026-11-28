@@ -182,6 +182,18 @@ fn tokens_of<'n>(node: Node<'n>, text: &str) -> Vec<Node<'n>> {
     found
 }
 
+/// The text a string literal holds, raw or not, between its first and
+/// last quotes; escapes are kept as written, which a path or a doc rarely
+/// holds.
+pub(super) fn string_value<'t>(literal: Node<'_>, text: &'t str) -> &'t str {
+    let spelled = text_of(literal, text);
+    let inside = spelled
+        .find('"')
+        .zip(spelled.rfind('"'))
+        .and_then(|(first, last)| spelled.get(first + 1..last));
+    inside.unwrap_or_default()
+}
+
 /// The visibility `item`'s modifier states, `Private` when it has none.
 /// The modifier is read from its tokens, so a comment inside it
 /// (`pub(/* why */ crate)`) changes nothing.
