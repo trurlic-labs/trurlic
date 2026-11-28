@@ -31,6 +31,7 @@ mod blobs;
 mod cache;
 mod findings;
 mod indexer;
+mod level;
 mod lexical;
 mod reads;
 mod repair;
@@ -39,8 +40,15 @@ mod walk;
 mod worktrees;
 
 pub(crate) use findings::{checked_findings, tree_findings};
+pub(crate) use level::{
+    Child, ChildKind, CrateFacts, DecisionCounts, Definitions, Dependencies, Dependency, Doc,
+    EndpointKind, FileFacts, FilePlace, ImportEdge, Imports, Level, Lines, ManifestState,
+    ModuleFacts, level,
+};
 pub(crate) use repair::{Seen, still_holding};
 
+#[cfg(test)]
+pub(crate) use level::{level_in, walked};
 #[cfg(test)]
 pub(crate) mod testing;
 #[cfg(test)]

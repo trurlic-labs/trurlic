@@ -143,6 +143,21 @@ impl Show for Count {
     }
 }
 
+/// Whether something holds.
+pub(crate) struct Bool;
+
+impl Show for Bool {
+    type Value = bool;
+
+    fn schema(&self) -> Map<String, Value> {
+        schema([("type", "boolean".into())])
+    }
+
+    fn value(&self, value: &bool) -> Value {
+        (*value).into()
+    }
+}
+
 /// One of `all`, written by its `name`.
 pub(crate) struct Tag<E: 'static> {
     pub all: &'static [E],
@@ -227,6 +242,7 @@ mod tests {
     struct Report {
         name: String,
         count: usize,
+        settled: bool,
         mood: Option<Mood>,
         parts: Vec<Part>,
     }
@@ -239,6 +255,9 @@ mod tests {
         fn declare(fields: &mut Shown<'_, Self>) {
             fields.required("name", "The name.", &Str, |report| &report.name);
             fields.required("count", "How many.", &Count, |report| &report.count);
+            fields.required("settled", "Whether settled.", &Bool, |report| {
+                &report.settled
+            });
             let mood = Tag {
                 all: &[Mood::Calm, Mood::Busy],
                 name: Mood::as_str,
@@ -272,10 +291,11 @@ mod tests {
                 "properties": {
                     "name": { "type": "string", "description": "The name." },
                     "count": { "type": "integer", "minimum": 0, "description": "How many." },
+                    "settled": { "type": "boolean", "description": "Whether settled." },
                     "mood": { "type": "string", "enum": ["calm", "busy"], "description": "The mood." },
                     "parts": { "type": "array", "items": part, "description": "The parts." },
                 },
-                "required": ["name", "count", "parts"],
+                "required": ["name", "count", "settled", "parts"],
                 "additionalProperties": false,
             })
         );
@@ -286,6 +306,7 @@ mod tests {
         let mut report = Report {
             name: "status".into(),
             count: 2,
+            settled: true,
             mood: Some(Mood::Busy),
             parts: vec![Part {
                 label: "one".into(),
@@ -293,7 +314,13 @@ mod tests {
         };
         assert_eq!(
             to_value(&report),
-            json!({ "name": "status", "count": 2, "mood": "busy", "parts": [{ "label": "one" }] })
+            json!({
+                "name": "status",
+                "count": 2,
+                "settled": true,
+                "mood": "busy",
+                "parts": [{ "label": "one" }],
+            })
         );
         report.mood = None;
         assert!(to_value(&report).get("mood").is_none());

@@ -3,6 +3,7 @@ mod check;
 mod fmt;
 mod init;
 mod install;
+mod map;
 mod migrate;
 mod placement;
 mod query;
@@ -14,6 +15,7 @@ pub(crate) use check::check;
 pub(crate) use fmt::fmt;
 pub(crate) use init::init;
 pub(crate) use install::install;
+pub(crate) use map::{MapFlags, map};
 pub(crate) use migrate::migrate;
 pub(crate) use query::query_file;
 pub(crate) use serve::serve;
@@ -45,17 +47,27 @@ fn answer<O: Output>(
     format: Format,
     print: impl FnOnce(&O) -> Result<()>,
 ) -> std::result::Result<(), ToolError> {
-    match (outcome, format) {
-        (Ok(result), Format::Json) => Ok(out!(
+    match format {
+        Format::Json => json(outcome),
+        Format::Text => Ok(print(&outcome?)?),
+    }
+}
+
+/// The text a tool's call returns of `outcome`, its result or its
+/// refusal, printed: what a command prints under `--json`. A refusal fails
+/// the command, and `cli` prints its message on stderr.
+fn json<O: Output>(
+    outcome: std::result::Result<O, ToolError>,
+) -> std::result::Result<(), ToolError> {
+    match outcome {
+        Ok(result) => Ok(out!(
             "{}",
             ToolResult::structured(to_value(&result)).text()
         )?),
-        (Ok(result), Format::Text) => Ok(print(&result)?),
-        (Err(refusal), Format::Json) => {
+        Err(refusal) => {
             out!("{}", ToolResult::refusal(&refusal).text())?;
             Err(refusal)
         }
-        (Err(refusal), Format::Text) => Err(refusal),
     }
 }
 

@@ -1,0 +1,22 @@
+component = "tools"
+choice = "A level's child holds its address, kind, name, sums and decisions, and what its kind alone has under a key named for the kind: crate, module or file"
+reason = "The view's types are generated from map's outputSchema, so a key holds one meaning whatever another holds, and what one kind alone has is an object under its own key. A crate's holds its manifest's state, package and dependencies by table, each an endpoint and the value that names it. A module's and a file's hold their imports into the other children of the level, with the dependency count, the re-export count and whether all are test code; an edge of re-exports alone is listed, with a count of 0. Dependency imports into files outside the level are counted, not listed: an import is listed at the level whose nodes hold both its files, and counted outside at each level below that one. A file's holds its place, an unreached or unresolved one saying why. A doc is a file's first paragraph, or a module's own file's when it has one own file and no other, as one target's doc would speak for a shared root module. The sums are of the walked files below a node, in one pass; a file with no line count or no index is counted apart, never as zero. A file reached across crates by #[path] counts in the crate of its module's root. name is the last segment of the path the address holds; what lies outside every crate is named outside_crates and comes first at the top."
+alternatives = [
+    "Keys a kind alone has at the top of every child: rejected because the schema would state them as optional on every kind",
+    "A dependency key to, path or name by endpoint: rejected because which key exists would hang on another key",
+    "Count an unknown file's lines or definitions as zero: rejected because the sum would read as known and smaller than it is",
+    "The doc of a shared root module's first file by path: rejected because src/lib.rs would speak for the binary",
+    "List imports out of the level: rejected because their targets are no nodes of the level",
+]
+status = "proposed"
+origin = "the map command: a level of the code tree"
+created = "2026-11-28T00:39:42.663158794Z"
+anchors = [
+    { file = "src/code/facts/level.rs", symbol = "CodeTree::doc" },
+    { file = "src/code/facts/level.rs", symbol = "Level::sums" },
+    { file = "src/sources/level.rs", symbol = "Child" },
+    { file = "src/sources/level.rs", symbol = "ChildKind" },
+    { file = "src/sources/level.rs", symbol = "Dependency" },
+    { file = "src/sources/level.rs", symbol = "FilePlace" },
+    { file = "src/sources/level.rs", symbol = "Imports" },
+]

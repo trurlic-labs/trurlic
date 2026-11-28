@@ -1,0 +1,300 @@
+[
+  {
+    "children": [
+      {
+        "address": "crate:.",
+        "crate": {
+          "dependencies": {
+            "build": [],
+            "dev": [
+              {
+                "endpoint": "unwalked",
+                "value": "../far"
+              }
+            ],
+            "normal": [
+              {
+                "endpoint": "crate",
+                "value": "crate:crates/core"
+              }
+            ]
+          },
+          "manifest": "read",
+          "package": "app"
+        },
+        "decisions": {
+          "accepted": 3,
+          "proposed": 3
+        },
+        "definitions": {
+          "all": 23,
+          "non_test": 21,
+          "unindexed_files": 2
+        },
+        "kind": "crate",
+        "lines": {
+          "counted": 40,
+          "unread_files": 1
+        },
+        "name": ".",
+        "unresolved_imports": 1
+      },
+      {
+        "address": "crate:crates/core",
+        "crate": {
+          "dependencies": {
+            "build": [],
+            "dev": [],
+            "normal": []
+          },
+          "manifest": "read",
+          "package": "core"
+        },
+        "decisions": {
+          "accepted": 1,
+          "proposed": 0
+        },
+        "definitions": {
+          "all": 3,
+          "non_test": 3,
+          "unindexed_files": 0
+        },
+        "kind": "crate",
+        "lines": {
+          "counted": 4,
+          "unread_files": 0
+        },
+        "name": "core",
+        "unresolved_imports": 0
+      },
+      {
+        "address": "crate:crates/old",
+        "crate": {
+          "manifest": "unread"
+        },
+        "decisions": {
+          "accepted": 0,
+          "proposed": 0
+        },
+        "definitions": {
+          "all": 0,
+          "non_test": 0,
+          "unindexed_files": 1
+        },
+        "kind": "crate",
+        "lines": {
+          "counted": 1,
+          "unread_files": 0
+        },
+        "name": "old",
+        "unresolved_imports": 0
+      }
+    ],
+    "decisions": {
+      "accepted": 4,
+      "proposed": 3
+    },
+    "decisions_in_no_child": {
+      "accepted": 1,
+      "proposed": 0
+    },
+    "total": 3
+  },
+  {
+    "children": [
+      {
+        "address": "module:broken@src",
+        "decisions": {
+          "accepted": 0,
+          "proposed": 0
+        },
+        "definitions": {
+          "all": 0,
+          "non_test": 0,
+          "unindexed_files": 1
+        },
+        "kind": "module",
+        "lines": {
+          "counted": 2,
+          "unread_files": 0
+        },
+        "module": {
+          "imports": {
+            "outside_level": 0,
+            "siblings": []
+          }
+        },
+        "name": "broken",
+        "unresolved_imports": 0
+      },
+      {
+        "address": "module:inline@src",
+        "decisions": {
+          "accepted": 0,
+          "proposed": 0
+        },
+        "definitions": {
+          "all": 1,
+          "non_test": 1,
+          "unindexed_files": 0
+        },
+        "kind": "module",
+        "lines": {
+          "counted": 3,
+          "unread_files": 0
+        },
+        "module": {
+          "imports": {
+            "outside_level": 0,
+            "siblings": [
+              {
+                "count": 1,
+                "reexports": 0,
+                "test_only": false,
+                "to": "module:store@src"
+              }
+            ]
+          }
+        },
+        "name": "inline",
+        "unresolved_imports": 0
+      },
+      {
+        "address": "module:store@src",
+        "decisions": {
+          "accepted": 2,
+          "proposed": 0
+        },
+        "definitions": {
+          "all": 4,
+          "non_test": 4,
+          "unindexed_files": 0
+        },
+        "kind": "module",
+        "lines": {
+          "counted": 10,
+          "unread_files": 0
+        },
+        "module": {
+          "doc": {
+            "cut": false,
+            "text": "Where things are kept."
+          },
+          "imports": {
+            "outside_level": 0,
+            "siblings": [
+              {
+                "count": 1,
+                "reexports": 0,
+                "test_only": false,
+                "to": "module:util@src"
+              }
+            ]
+          }
+        },
+        "name": "store",
+        "unresolved_imports": 1
+      },
+      {
+        "address": "module:tests@src",
+        "decisions": {
+          "accepted": 0,
+          "proposed": 0
+        },
+        "definitions": {
+          "all": 1,
+          "non_test": 0,
+          "unindexed_files": 0
+        },
+        "kind": "module",
+        "lines": {
+          "counted": 5,
+          "unread_files": 0
+        },
+        "module": {
+          "imports": {
+            "outside_level": 0,
+            "siblings": [
+              {
+                "count": 1,
+                "reexports": 0,
+                "test_only": true,
+                "to": "module:store@src"
+              }
+            ]
+          }
+        },
+        "name": "tests",
+        "unresolved_imports": 0
+      },
+      {
+        "address": "module:util@src",
+        "decisions": {
+          "accepted": 1,
+          "proposed": 1
+        },
+        "definitions": {
+          "all": 1,
+          "non_test": 1,
+          "unindexed_files": 0
+        },
+        "kind": "module",
+        "lines": {
+          "counted": 2,
+          "unread_files": 0
+        },
+        "module": {
+          "doc": {
+            "cut": false,
+            "text": "Small helpers."
+          },
+          "imports": {
+            "outside_level": 0,
+            "siblings": []
+          }
+        },
+        "name": "util",
+        "unresolved_imports": 0
+      },
+      {
+        "address": "file:src/lib.rs",
+        "decisions": {
+          "accepted": 0,
+          "proposed": 0
+        },
+        "definitions": {
+          "all": 6,
+          "non_test": 5,
+          "unindexed_files": 0
+        },
+        "file": {
+          "doc": {
+            "cut": false,
+            "text": "The app."
+          },
+          "imports": {
+            "outside_level": 0,
+            "siblings": []
+          },
+          "place": "in_module"
+        },
+        "kind": "file",
+        "lines": {
+          "counted": 9,
+          "unread_files": 0
+        },
+        "name": "lib.rs",
+        "unresolved_imports": 0
+      }
+    ],
+    "decisions": {
+      "accepted": 3,
+      "proposed": 2
+    },
+    "decisions_in_no_child": {
+      "accepted": 0,
+      "proposed": 1
+    },
+    "total": 6
+  }
+]

@@ -154,7 +154,7 @@ pub(crate) struct Definition {
 /// The first paragraph of a doc as the Rust resolver reads it
 /// (`parse/rust/docs.rs`): never empty, at most [`MAX_DOC_BYTES`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::code) struct Doc {
+pub(crate) struct Doc {
     text: Box<str>,
     cut: bool,
 }
@@ -170,13 +170,13 @@ impl Doc {
         })
     }
 
-    pub(in crate::code) fn text(&self) -> &str {
+    pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
     /// Whether the paragraph ran past [`MAX_DOC_BYTES`], so the text holds
     /// its first bytes up to a char boundary and no more.
-    pub(in crate::code) const fn is_cut(&self) -> bool {
+    pub(crate) const fn is_cut(&self) -> bool {
         self.cut
     }
 }

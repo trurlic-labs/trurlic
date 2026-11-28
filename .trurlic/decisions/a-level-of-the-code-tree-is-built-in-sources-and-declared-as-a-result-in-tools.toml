@@ -1,0 +1,15 @@
+component = "sources"
+choice = "sources builds a level's values from code's tree and the decisions, owned and named for the JSON; tools declares them as map's result and pages them, naming no code item"
+reason = "tools names no item of code by the module map, and code names no decision or status, so neither alone can build a level. sources names both: it reads the tree, takes from code the level's nodes, sums, edges and where each anchor lies, and counts the decisions by status. It hands tools a Level of owned text, counts and closed enums whose as_str names are the JSON's, as lint hands status its findings. tools implements Output on them and pages them. code keeps the pure facts: an address, a level's files and edges, a node's doc. No arrow of the module map is added."
+alternatives = [
+    "An arrow from tools to code: rejected because sources names code and the store already, so the arrow would buy nothing a module map should pay for",
+    "Build the level in lint: rejected because a level is no finding, and lint would hold a second responsibility",
+    "Build it in commands: rejected because commands names no code item either",
+]
+status = "proposed"
+origin = "the map command: a level of the code tree"
+created = "2026-11-28T00:39:42.663158794Z"
+anchors = [
+    { file = "src/sources/level.rs", symbol = "Level" },
+    { file = "src/sources/level.rs", symbol = "level" },
+]

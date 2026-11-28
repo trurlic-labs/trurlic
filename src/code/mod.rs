@@ -25,14 +25,17 @@ mod parse;
 pub(crate) mod testing;
 
 pub(crate) use dispatch::{BOUNDS, INDEX_FORMAT, index};
-pub(crate) use facts::{Code, CodeFacts, Entry, FileFault, MANIFEST, ReadFault, Resolution};
 #[cfg(test)]
-pub(crate) use facts::{CodeTree, Node, Target};
+pub(crate) use facts::Target;
+pub(crate) use facts::{
+    Code, CodeFacts, CodeTree, Covered, Crate, Edge, Endpoint, Entry, FileFault, Level, MANIFEST,
+    Module, Node, ReadFault, Resolution, Unresolved,
+};
 #[cfg(test)]
 pub(crate) use index::SpanHash;
 pub(crate) use index::{
-    DefinitionKind, FileKind, HASH_SCHEME, Indexed, MAX_SOURCE_BYTES, decode as decode_index,
-    encode as encode_index, line_count, max_entry_bytes,
+    DefinitionKind, DependencyKind, FileKind, HASH_SCHEME, Indexed, MAX_SOURCE_BYTES,
+    decode as decode_index, encode as encode_index, line_count, max_entry_bytes,
 };
 pub(crate) use parse::{
     BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, grammar_identity_of,

@@ -13,7 +13,7 @@ use super::walk::{Declared, Reach, walk};
 use crate::code::index::FileKind;
 
 /// Where a file of the tree stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Place<'i> {
     /// The directory of its crate's manifest, `""` at the code root;
     /// `None` outside every crate. A [`Module::Rust`] file is in the
@@ -25,7 +25,7 @@ pub(crate) struct Place<'i> {
 }
 
 /// The module a file is in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Module<'i> {
     /// A Rust file the walk reaches at one module: the module's own file,
     /// `name.rs` and `name/mod.rs` alike, so a one-file module and a
@@ -51,7 +51,7 @@ pub(crate) enum Module<'i> {
 }
 
 /// Why a Rust file the walk reaches is at no one module path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Unresolved {
     /// Reached at two or more: a second `#[path]` to it, a target's root
     /// that a file also declares, a declaration from targets of two root
@@ -95,7 +95,7 @@ impl<'i> ModulePaths<'i> {
     }
 
     /// `segment` below `parent`, when a path of the tree is.
-    pub(super) fn find(&self, parent: ModulePath, segment: &'i str) -> Option<ModulePath> {
+    pub(super) fn find(&self, parent: ModulePath, segment: &str) -> Option<ModulePath> {
         let id = self.ids.get(&(parent, segment))?;
         Some(ModulePath(Some(*id)))
     }

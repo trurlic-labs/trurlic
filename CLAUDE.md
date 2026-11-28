@@ -13,10 +13,11 @@ store      → git                         graph files: schema, canonical form, 
                                          quality rules, apply, commit/journal/recovery, lock,
                                          migrations, a shared graph's history
 tools      → store, lint, sources,       the tools, known to no surface: specs (schema = parser),
-             budget, discovery           `apply`, `status`, the hand-written tools, registry, result cap
+             budget, discovery           `apply`, `status`, `map` (listed by no MCP client), the
+                                         hand-written tools, registry, result cap
 mcp        → tools, budget               JSON-RPC stdio server: protocol, client, envelope, `tools/list`
-commands   → store, tools, mcp (serve),  init, apply, status, query, check, fmt, migrate, install, serve
-             sources, lint, git,
+commands   → store, tools, mcp (serve),  init, apply, status, map, query, check, fmt, migrate,
+             sources, lint, git,         install, serve
              discovery, budget
 cli        → commands, store, tools      clap definitions and dispatch
 discovery  → store, git                  graph and code root from the calling directory
@@ -25,10 +26,12 @@ lint       → store, code                 pure findings over the graph that ref
                                          decisions with file anchors only, anchor findings and
                                          their repairs
 sources    → code, lint, store, git      code-root walk, bounded reads, index cache, other worktrees,
-                                         the anchor findings of `check` and `status`
+                                         the anchor findings of `check` and `status`, a level of the
+                                         code tree for `map`
 code       → store (types)               pure code index: its values (`index/`), resolvers (`parse/`,
                                          `lexical/`) and the one reader of Rust paths, facts over a
-                                         whole tree (`facts/`): places, crates, imports
+                                         whole tree (`facts/`): places, crates, imports, a level
+                                         and a node's address
 git        → —                           `git` as a child process; `git::graph` = the graph's own repo
 budget     → —                           a tool call's byte limits, fitting output into a byte budget
 error      → store (types)               `Error`, `Result`
@@ -61,6 +64,7 @@ purity     → code (tests only)           what a module's non-test code may nam
 | Refusal JSON, result fitting | `tools/result.rs`, `tools/truncate.rs` |
 | Tool registry / its MCP listing and result envelope | `tools/registry.rs` / `mcp/listing.rs`, `mcp/envelope.rs` |
 | Tools written by hand (`get_context`, `get_decisions_for_file`) | `tools/handwritten/` |
+| The code tree a level at a time: a node's address / a level's files, sums, edges and anchors / its values with the decisions / `map`'s pages and `trurlic map --json` | `code/facts/address.rs` / `code/facts/level.rs` / `sources/level.rs` / `tools/map/`, `commands/map.rs` |
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/index/work.rs` / `code/index/encoding/` |
 | Rust tokens no span hash holds (rustfmt's commas and braces) | `code/parse/rust/silent.rs` |

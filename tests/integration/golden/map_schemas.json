@@ -1,0 +1,514 @@
+{
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "from": {
+        "description": "The address of the first child to list: a previous page's `next`.",
+        "maxLength": 24576,
+        "type": "string"
+      },
+      "node": {
+        "description": "The address of the node whose children to list, as a level gives it; the crates, and what lies outside every crate, without it.",
+        "maxLength": 24576,
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "children": {
+        "description": "The page's children, in the order of the level: crates, modules, directories, then files, each kind by its path.",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "description": "Its address: `node` set to it lists the nodes it holds.",
+              "type": "string"
+            },
+            "crate": {
+              "additionalProperties": false,
+              "description": "Present on a child of kind `crate` alone.",
+              "properties": {
+                "dependencies": {
+                  "additionalProperties": false,
+                  "description": "Its path and workspace dependencies, by the table of its manifest that states them, when its manifest is read.",
+                  "properties": {
+                    "build": {
+                      "description": "`[build-dependencies]`.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "endpoint": {
+                            "description": "`crate`: a crate of the tree; `unwalked`: a path whose directory holds no walked manifest; `no_workspace_root`: a workspace dependency of a crate with no workspace root the walked manifests show; `not_in_workspace`: a workspace dependency its root does not name.",
+                            "enum": [
+                              "crate",
+                              "unwalked",
+                              "no_workspace_root",
+                              "not_in_workspace"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "description": "For `crate` the crate's address, a child of the top level; for `unwalked` the path as the manifest writes it; for the other two the dependency's name.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "endpoint",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "dev": {
+                      "description": "`[dev-dependencies]`.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "endpoint": {
+                            "description": "`crate`: a crate of the tree; `unwalked`: a path whose directory holds no walked manifest; `no_workspace_root`: a workspace dependency of a crate with no workspace root the walked manifests show; `not_in_workspace`: a workspace dependency its root does not name.",
+                            "enum": [
+                              "crate",
+                              "unwalked",
+                              "no_workspace_root",
+                              "not_in_workspace"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "description": "For `crate` the crate's address, a child of the top level; for `unwalked` the path as the manifest writes it; for the other two the dependency's name.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "endpoint",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "normal": {
+                      "description": "`[dependencies]`.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "endpoint": {
+                            "description": "`crate`: a crate of the tree; `unwalked`: a path whose directory holds no walked manifest; `no_workspace_root`: a workspace dependency of a crate with no workspace root the walked manifests show; `not_in_workspace`: a workspace dependency its root does not name.",
+                            "enum": [
+                              "crate",
+                              "unwalked",
+                              "no_workspace_root",
+                              "not_in_workspace"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "description": "For `crate` the crate's address, a child of the top level; for `unwalked` the path as the manifest writes it; for the other two the dependency's name.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "endpoint",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "omitted": {
+                      "description": "The dependencies the page left out of the tables, every one, when the crate passes a page with them.",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "normal",
+                    "dev",
+                    "build"
+                  ],
+                  "type": "object"
+                },
+                "manifest": {
+                  "description": "`read`, or `unread` when its manifest has no index (a syntax error, a file past its size), so its package and dependencies are unknown.",
+                  "enum": [
+                    "read",
+                    "unread"
+                  ],
+                  "type": "string"
+                },
+                "package": {
+                  "description": "Its package name, when its manifest is read and names one.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "manifest"
+              ],
+              "type": "object"
+            },
+            "decisions": {
+              "additionalProperties": false,
+              "description": "The decisions anchored in it, each once: one of whose anchors names a walked file at or below it, or a directory whose walked files all are.",
+              "properties": {
+                "accepted": {
+                  "description": "Accepted decisions.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "proposed": {
+                  "description": "Proposed decisions.",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "proposed",
+                "accepted"
+              ],
+              "type": "object"
+            },
+            "definitions": {
+              "additionalProperties": false,
+              "description": "The definitions the index holds of the walked files at or below it.",
+              "properties": {
+                "all": {
+                  "description": "Every definition, test code included.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "non_test": {
+                  "description": "The definitions neither marked test code nor in a file that is.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "unindexed_files": {
+                  "description": "The files with no index (unread, not UTF-8, too large or too complex to index), whose definitions both counts leave out.",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "all",
+                "non_test",
+                "unindexed_files"
+              ],
+              "type": "object"
+            },
+            "file": {
+              "additionalProperties": false,
+              "description": "Present on a child of kind `file` alone.",
+              "properties": {
+                "doc": {
+                  "additionalProperties": false,
+                  "description": "The first paragraph of its doc the index holds: a Rust file's.",
+                  "properties": {
+                    "cut": {
+                      "description": "Whether the paragraph runs on past `text`, the bytes of it the index holds.",
+                      "type": "boolean"
+                    },
+                    "text": {
+                      "description": "The paragraph, on one line.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "cut"
+                  ],
+                  "type": "object"
+                },
+                "imports": {
+                  "additionalProperties": false,
+                  "description": "The Rust imports of the files below it that resolve to a file: those into the other children of the level, listed, and the dependency imports into files outside the level, counted.",
+                  "properties": {
+                    "omitted": {
+                      "description": "The edges the page left out of `siblings`, every one, when the child passes a page with them.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "outside_level": {
+                      "description": "The dependency imports into files outside the level, counted and not listed; re-exports are left out.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "siblings": {
+                      "description": "Into the files below the other children of the level, by the order of the child they go to.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "count": {
+                            "description": "The dependency imports: every import but a re-export. 0 for an edge of re-exports alone, which is listed.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "reexports": {
+                            "description": "The re-exports: `use`s a visibility opens, which are no dependency.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "test_only": {
+                            "description": "Whether every one of them, dependency or re-export, is test code.",
+                            "type": "boolean"
+                          },
+                          "to": {
+                            "description": "The address of the child they go to.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "to",
+                          "count",
+                          "reexports",
+                          "test_only"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "siblings",
+                    "outside_level"
+                  ],
+                  "type": "object"
+                },
+                "place": {
+                  "description": "`in_module`: a Rust file at its module; `no_module`: a file of a language with no modules, or a manifest; `unreached`: a Rust file no target's mod declarations reach; `unresolved_several`: one reached at two or more module paths; `unresolved_in_item`: one a mod inside a function or another item declares; `unresolved_two_files`: one declared where both name.rs and name/mod.rs are.",
+                  "enum": [
+                    "in_module",
+                    "no_module",
+                    "unreached",
+                    "unresolved_several",
+                    "unresolved_in_item",
+                    "unresolved_two_files"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "place",
+                "imports"
+              ],
+              "type": "object"
+            },
+            "kind": {
+              "description": "`crate`, with the key `crate`; `outside_crates`: what lies outside every crate, from the code root, first of the top level when it is there; `module`: a Rust module, its own file or files and the modules below it, with the key `module`; `directory`: files in no Rust module; `file`, with the key `file`.",
+              "enum": [
+                "crate",
+                "outside_crates",
+                "module",
+                "directory",
+                "file"
+              ],
+              "type": "string"
+            },
+            "lines": {
+              "additionalProperties": false,
+              "description": "The lines of the walked files at or below it.",
+              "properties": {
+                "counted": {
+                  "description": "The lines of the files whose bytes were read.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "unread_files": {
+                  "description": "The files none of whose bytes were read (past the size a source file may have, unreadable), whose lines `counted` leaves out.",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "counted",
+                "unread_files"
+              ],
+              "type": "object"
+            },
+            "module": {
+              "additionalProperties": false,
+              "description": "Present on a child of kind `module` alone.",
+              "properties": {
+                "doc": {
+                  "additionalProperties": false,
+                  "description": "The first paragraph of its own file's doc the index holds, when it has one own file and no other.",
+                  "properties": {
+                    "cut": {
+                      "description": "Whether the paragraph runs on past `text`, the bytes of it the index holds.",
+                      "type": "boolean"
+                    },
+                    "text": {
+                      "description": "The paragraph, on one line.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "cut"
+                  ],
+                  "type": "object"
+                },
+                "imports": {
+                  "additionalProperties": false,
+                  "description": "The Rust imports of the files below it that resolve to a file: those into the other children of the level, listed, and the dependency imports into files outside the level, counted.",
+                  "properties": {
+                    "omitted": {
+                      "description": "The edges the page left out of `siblings`, every one, when the child passes a page with them.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "outside_level": {
+                      "description": "The dependency imports into files outside the level, counted and not listed; re-exports are left out.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "siblings": {
+                      "description": "Into the files below the other children of the level, by the order of the child they go to.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "count": {
+                            "description": "The dependency imports: every import but a re-export. 0 for an edge of re-exports alone, which is listed.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "reexports": {
+                            "description": "The re-exports: `use`s a visibility opens, which are no dependency.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "test_only": {
+                            "description": "Whether every one of them, dependency or re-export, is test code.",
+                            "type": "boolean"
+                          },
+                          "to": {
+                            "description": "The address of the child they go to.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "to",
+                          "count",
+                          "reexports",
+                          "test_only"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "siblings",
+                    "outside_level"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "imports"
+              ],
+              "type": "object"
+            },
+            "name": {
+              "description": "The last segment of its path: of a crate's or a root module's directory, `.` for the code root, a module's own name, a directory's or a file's; `outside_crates` for what lies outside every crate.",
+              "type": "string"
+            },
+            "unresolved_imports": {
+              "description": "The Rust imports of the files at or below it that resolve to no file, re-exports included.",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "address",
+            "kind",
+            "name",
+            "lines",
+            "definitions",
+            "decisions",
+            "unresolved_imports"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "decisions": {
+        "additionalProperties": false,
+        "description": "The decisions anchored in the node whose level this is, each once; at the top, every decision of the graph.",
+        "properties": {
+          "accepted": {
+            "description": "Accepted decisions.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "proposed": {
+            "description": "Proposed decisions.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "proposed",
+          "accepted"
+        ],
+        "type": "object"
+      },
+      "decisions_in_no_child": {
+        "additionalProperties": false,
+        "description": "Those of `decisions` anchored in no one child: through a directory whose walked files lie under two children or more, and at the top through no walked file.",
+        "properties": {
+          "accepted": {
+            "description": "Accepted decisions.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "proposed": {
+            "description": "Proposed decisions.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "proposed",
+          "accepted"
+        ],
+        "type": "object"
+      },
+      "next": {
+        "description": "The address of the first child after the page: `from` lists from it.",
+        "type": "string"
+      },
+      "omitted": {
+        "description": "The children after the page, when it leaves any out.",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "too_large": {
+        "description": "The children between the page's first and `next` that no page lists: one whose record passes a page of its own even with its list left out, or whose address takes more than a quarter of the result.",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "total": {
+        "description": "The children of the level, on every page.",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "truncated": {
+        "description": "Present only when the result was cut to fit the result budget: each cut, by JSON pointer, with what it omitted.",
+        "items": {
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "total",
+      "decisions",
+      "decisions_in_no_child",
+      "children"
+    ],
+    "type": "object"
+  }
+}

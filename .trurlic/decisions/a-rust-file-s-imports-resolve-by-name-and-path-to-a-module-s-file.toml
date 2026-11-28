@@ -13,7 +13,7 @@ created = "2026-11-27T23:27:09.715654771Z"
 anchors = [
     { file = "src/code/facts/imports.rs", symbol = "Resolver" },
     { file = "src/code/facts/imports.rs", symbol = "file_edges" },
-    { file = "src/code/facts/tree.rs", symbol = "CodeTree::edges" },
+    { file = "src/code/facts/level.rs", symbol = "Level::edges" },
     { file = "src/code/index/import.rs", symbol = "ImportKind" },
 ]
 

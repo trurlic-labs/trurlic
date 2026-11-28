@@ -1,0 +1,16 @@
+component = "sources"
+choice = "A decision counts once in the node of a level below which lie all the walked files one of its anchors covers, and in the holder when they lie below it; an anchor covering none counts nowhere"
+reason = "The map shows where the decisions are anchored. A file anchor covers its file, a directory anchor the walked files below it, and the anchor lies in the node of the level below which every file it covers lies. So a directory anchor counts where its whole directory is, never in each file below it. A symbol names a part of its file and never another file, so a stale or ambiguous symbol still counts where its file is; check and status report the anchor itself. A path that covers no walked file, missing, of a kind the walk does not take or outside the code root, counts in no node. A decision with anchors in two nodes counts once in each. A page also counts the decisions anchored in the level's holder, and apart those in no one child, through a directory over two children. At the top every decision of the graph is the holder's, so one with no walked anchor is counted there."
+alternatives = [
+    "Count only anchors that resolve: rejected because a stale symbol would hide its decision from the file it names, which check reports already",
+    "Count a directory anchor in every node below the directory: rejected because a decision on src would count in every file, and a count would stop saying where decisions are anchored",
+    "Count anchors rather than decisions: rejected because a decision with four anchors in one file would weigh four",
+    "Leave out what no child holds: rejected because a decision over two children would show in no node of their level, and the view computes nothing",
+]
+status = "proposed"
+origin = "the map command: a level of the code tree"
+created = "2026-11-28T00:39:42.663158794Z"
+anchors = [
+    { file = "src/code/facts/level.rs", symbol = "Level::covered" },
+    { file = "src/sources/level.rs", symbol = "Tallied::of" },
+]

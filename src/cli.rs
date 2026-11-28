@@ -99,8 +99,9 @@ enum ProjectCommand {
     },
 }
 
-/// The CLI twins of the MCP tools: each runs the tool's own code on the
-/// project's graph and prints its result, `--json` as the tool returns it.
+/// The commands that run a tool's own code on the project's graph and
+/// print its result, `--json` as the tool returns it: the CLI twins of the
+/// MCP tools, and `map`, a tool no MCP client lists.
 #[derive(Subcommand, Debug)]
 enum ToolCommand {
     /// Apply a batch of ops to the graph, all or none, in one commit.
@@ -134,6 +135,24 @@ enum ToolCommand {
 
         /// Print the tool's JSON result.
         #[arg(long)]
+        json: bool,
+    },
+
+    /// Print one level of the code tree as JSON: the nodes one node holds,
+    /// with the lines, definitions and decisions in and under each and the
+    /// imports between them.
+    Map {
+        /// The address of the node whose children to list, as a level
+        /// gives it; the crates, and what lies outside every crate,
+        /// without it.
+        node: Option<String>,
+
+        /// The address of the first child to list: a page's `next`.
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Print the tool's JSON result, the one form `map` prints.
+        #[arg(long, required = true)]
         json: bool,
     },
 }
@@ -213,6 +232,18 @@ fn run_tool(command: ToolCommand) -> std::result::Result<(), ToolError> {
                 from: from.as_deref(),
             },
             format(json),
+        ),
+        // `--json` is required: the JSON is the one form `map` prints.
+        ToolCommand::Map {
+            node,
+            from,
+            json: _,
+        } => commands::map(
+            &cwd,
+            commands::MapFlags {
+                node: node.as_deref(),
+                from: from.as_deref(),
+            },
         ),
     }
 }
